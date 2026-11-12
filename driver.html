@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1247d6">
+<title>Молочный Мир: водитель</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/driver.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>Молочный Мир</span></div>
+  <button type="button" id="btn-change" class="link" hidden>Сменить машину</button>
+</header>
+
+<main id="app">
+  <p class="loading">Загружаю маршрут…</p>
+</main>
+
+<div class="sheet-back" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h2 id="sheet-title">Что случилось?</h2>
+    <div class="reasons" id="reasons"></div>
+    <label for="problem-note" class="note-label">Комментарий, если нужно</label>
+    <textarea id="problem-note" rows="2" placeholder="Например: стою на Горького, жду эвакуатор"></textarea>
+    <div class="sheet-actions">
+      <button type="button" id="sheet-cancel" class="btn ghost">Отмена</button>
+      <button type="button" id="sheet-send" class="btn danger" disabled>Отправить диспетчеру</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/store.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/data.js"></script>
+<script src="js/solver.js"></script>
+<script src="js/driver.js"></script>
+</body>
+</html>

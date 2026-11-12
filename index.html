@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Молочный Мир: план доставки</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>Молочный Мир</h1>
+      <p id="meta">План доставки по Гродно</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <span id="conn" class="pill">Подключаюсь…</span>
+    <span id="approval" class="pill warn">План не утверждён</span>
+    <div class="seg" role="group" aria-label="Какой план показывать">
+      <button type="button" id="view-best" class="on">Оптимизированный</button>
+      <button type="button" id="view-naive">По списку, для сравнения</button>
+    </div>
+    <button type="button" id="btn-recalc" class="btn">Пересчитать</button>
+    <button type="button" id="btn-approve" class="btn primary">Утвердить план</button>
+    <button type="button" id="btn-qr" class="btn">Водителю</button>
+    <button type="button" id="btn-reset" class="btn">Сбросить демо</button>
+  </div>
+</header>
+
+<section class="kpis" id="kpis" aria-label="Показатели плана"></section>
+
+<main class="work">
+  <aside class="panel" aria-label="Данные">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" class="on" data-tab="orders">Заказы</button>
+      <button type="button" role="tab" data-tab="vehicles">Машины</button>
+      <button type="button" role="tab" data-tab="settings">Правила</button>
+    </div>
+
+    <div class="tab-body" id="tab-orders">
+      <input type="search" id="order-search" placeholder="Найти магазин или улицу" aria-label="Поиск по заказам">
+      <div class="scroll">
+        <table class="grid" id="orders-table">
+          <thead><tr><th title="Важная точка: приехать в течение часа после указанного времени">★</th><th>Получатель</th><th>Кг</th><th>Не раньше</th><th>Маш.</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-body" id="tab-vehicles" hidden>
+      <div class="scroll">
+        <table class="grid" id="vehicles-table">
+          <thead><tr><th>На линии</th><th>Машина</th><th>Вместимость, кг</th><th>Загрузка</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button type="button" id="btn-add-vehicle" class="btn wide">Добавить машину</button>
+      </div>
+    </div>
+
+    <div class="tab-body" id="tab-settings" hidden>
+      <div class="scroll"><form id="settings-form" class="settings"></form></div>
+    </div>
+  </aside>
+
+  <section class="map-wrap" aria-label="Карта маршрутов">
+    <div id="map"></div>
+    <p class="map-note" id="map-note"></p>
+  </section>
+
+  <aside class="panel" aria-label="Маршруты">
+    <div class="panel-head"><h2>Маршруты</h2><span id="status" class="status"></span></div>
+    <div class="scroll">
+      <div id="feed" aria-live="polite"></div>
+      <div id="problems"></div>
+      <div id="routes"></div>
+    </div>
+  </aside>
+</main>
+
+<div class="overlay" id="qr-overlay" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="qr-title">
+    <h2 id="qr-title">Страница водителя</h2>
+    <div id="qr-code" class="qr"></div>
+    <a id="qr-link" href="driver.html" target="_blank" rel="noopener">driver.html</a>
+    <p id="qr-note"></p>
+    <button type="button" id="qr-close" class="btn">Закрыть</button>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="js/config.js"></script>
+<script src="js/store.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/data.js"></script>
+<script src="js/solver.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
