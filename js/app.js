@@ -128,7 +128,8 @@
     var refKm = st.refKmPerRoute * plans.naive.used, diff = refKm ? (p.km - refKm) / refKm * 100 : 0;
     var longest = 0, loadSum = 0;
     p.routes.forEach(function (r) { if (r.seq.length) { longest = Math.max(longest, st.loadMin + r.back - r.depart); loadSum += r.loadPct; } });
-    var bad = p.problems.length > 0, html = '';
+    var bad = p.problems.length > 0, html = '', tol = st.overtimeToleranceMin || 0;
+    var shiftOk = longest <= st.shiftMin + Math.max(0.5, tol), shiftExact = longest <= st.shiftMin + 0.5;
     html += tile('Пробег за день', num(p.km), 'км',
       '<span class="pill ' + (diff <= 0 ? 'good' : 'bad') + '">' + (diff <= 0 ? '−' : '+') + num(Math.abs(diff)) + '%</span>',
       'Сейчас около ' + num(refKm) + ' км: ' + st.refKmPerRoute + ' км × ' + plans.naive.used + ' маршрутов, со слов логистов');
@@ -136,7 +137,7 @@
       p.used < active ? '<span class="pill good">' + (active - p.used) + ' в гараже</span>' : '',
       'Средняя загрузка ' + num(p.used ? loadSum / p.used : 0) + '%, правило: не ниже ' + st.minLoadPct + '%');
     html += tile('Самая длинная смена', hours(longest), '',
-      '<span class="pill ' + (longest <= st.shiftMin + 0.5 ? 'good' : 'bad') + '">' + (longest <= st.shiftMin + 0.5 ? 'в норме' : 'переработка') + '</span>',
+      '<span class="pill ' + (shiftExact ? 'good' : (shiftOk ? 'warn' : 'bad')) + '">' + (shiftExact ? 'в норме' : (shiftOk ? 'в допуске ' + tol + ' мин' : 'переработка')) + '</span>',
       'Норма ' + hours(st.shiftMin) + ' с загрузкой. Всего в рейсах ' + num(p.workMin / 60) + ' ч, последняя машина вернётся в ' + clock(p.lastBack));
     html += tile('Нарушения правил', p.problems.length, '',
       '<span class="pill ' + (bad ? 'bad' : 'good') + '">' + (bad ? 'нужно внимание' : 'план выполним') + '</span>',
@@ -171,7 +172,11 @@
   }
 
   function renderProblems(p) {
-    if (!p.problems.length) { $('problems').innerHTML = '<div class="problems ok">Все правила соблюдены</div>'; return; }
+    if (!p.problems.length) {
+      var within = p.overtimeMin > 0.5 || p.overloadKg > 0.5;
+      $('problems').innerHTML = '<div class="problems ok">' + (within ? 'План выполним. Есть мелкие отклонения в пределах допуска, они отмечены на маршрутах' : 'Все правила соблюдены') + '</div>';
+      return;
+    }
     var items = p.problems.slice(0, 6).map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
     if (p.problems.length > 6) items += '<li>и ещё ' + (p.problems.length - 6) + '</li>';
     $('problems').innerHTML = '<div class="problems has"><b>Что не сходится</b><ul>' + items + '</ul></div>';
@@ -185,9 +190,11 @@
     p.routes.forEach(function (r, k) {
       if (!r.seq.length) { garage.push(r.vehicle.name); return; }
       var c = colorOf(r.vehicle.id), sel = k === selected, flags = '', last = idx.lastByVehicle[r.vehicle.id];
-      var barClass = r.overload > 0.5 ? 'bad' : (r.loadPct < state.settings.minLoadPct ? 'warn' : '');
-      if (r.overload > 0.5) flags += '<span class="pill bad">перегруз ' + num(r.overload) + ' кг</span>';
-      if (r.overtime > 0.5) flags += '<span class="pill bad">переработка ' + num(r.overtime) + ' мин</span>';
+      var barClass = r.overloadBad ? 'bad' : (r.loadPct < state.settings.minLoadPct ? 'warn' : '');
+      if (r.overloadBad) flags += '<span class="pill bad">перегруз ' + num(r.overload) + ' кг</span>';
+      else if (r.overload > 0.5) flags += '<span class="pill warn">+' + num(r.overload) + ' кг, в допуске</span>';
+      if (r.overtimeBad) flags += '<span class="pill bad">переработка ' + num(r.overtime) + ' мин</span>';
+      else if (r.overtime > 0.5) flags += '<span class="pill warn">+' + num(r.overtime) + ' мин, в допуске</span>';
       if (r.late > 0.5) flags += '<span class="pill bad">опоздание</span>';
       if (r.center > 0) flags += '<span class="pill bad">большая машина в центре</span>';
       if (r.loadPct < state.settings.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
@@ -351,6 +358,8 @@
     ['dayEnd', 'Последняя разгрузка не позже', 'Наше допущение: конец рабочего дня', 'time'],
     ['importantWindowMin', 'Окно для важных точек, мин', 'К точкам со звёздочкой приезжаем в течение этого времени'],
     ['minLoadPct', 'Минимальная загрузка, %', 'Жёсткое правило: иначе машина остаётся в гараже'],
+    ['overtimeToleranceMin', 'Допуск по смене, мин', 'Переработку меньше этого не считаем нарушением. Наше допущение'],
+    ['overloadTolerancePct', 'Допуск по загрузке, %', 'Тоннаж в заказах приблизительный. Наше допущение', 'step'],
     ['delayWeight', 'Важность приезда ко времени', '0 — важен только пробег; чем больше, тем раньше разгрузка', 'step'],
     ['trafficFactor', 'Запас на пробки, ×', 'Время в пути по дорогам умножается на это число. Наше допущение', 'step'],
     ['refKmPerRoute', 'Пробег маршрута сейчас, км', 'Со слов логистов, для сравнения'],

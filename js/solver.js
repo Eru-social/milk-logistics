@@ -329,8 +329,11 @@
       out.delayMin += e.delay; out.firstDepart = Math.min(out.firstDepart, e.depart);
       out.workMin += P.st.loadMin + e.back - e.depart; out.lastBack = Math.max(out.lastBack, e.back);
       e.stops.forEach(function (s) { if (s.late > 0.5) out.lateStops++; });
-      if (e.overload > 0.5) out.problems.push(v.name + ': перегруз ' + Math.round(e.overload) + ' кг');
-      if (e.overtime > 0.5) out.problems.push(v.name + ': переработка ' + Math.round(e.overtime) + ' мин');
+      // Мелкие отклонения в пределах допуска показываем, но нарушением не считаем.
+      r.overloadBad = e.overload > Math.max(0.5, v.cap * (P.st.overloadTolerancePct || 0) / 100);
+      r.overtimeBad = e.overtime > Math.max(0.5, P.st.overtimeToleranceMin || 0);
+      if (r.overloadBad) out.problems.push(v.name + ': перегруз ' + Math.round(e.overload) + ' кг');
+      if (r.overtimeBad) out.problems.push(v.name + ': переработка ' + Math.round(e.overtime) + ' мин');
       if (e.center > 0) out.problems.push(v.name + ': большая машина в центре (' + e.center + ' точ.)');
       if (e.underload > 0) { out.underloaded++; out.problems.push(v.name + ': загрузка ' + Math.round(r.loadPct) + '% (ниже ' + P.st.minLoadPct + '%)'); }
     });
