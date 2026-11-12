@@ -455,11 +455,14 @@
       fm.result.variants.forEach(function (v, n) {
         var s = v.stats, pills = '';
         pills += s.dropped ? '<span class="pill bad">не доставим ' + s.dropped + ' точ., ' + num(s.droppedKg) + ' кг</span>' : '<span class="pill good">довезём всё</span>';
-        pills += s.overtime > 0.5 ? '<span class="pill warn">переработка ' + hours(s.overtime) + ' на ' + s.overtimeVehicles + ' вод.</span>' : '<span class="pill good">без переработки</span>';
+        var more = s.overtime - s.overtimeWas;          // переработка могла быть ещё до этого происшествия: показываем, что добавилось
+        if (s.overtime <= 0.5) pills += '<span class="pill good">без переработки</span>';
+        else if (s.overtimeWas > 0.5) pills += more > 0.5 ? '<span class="pill warn">переработка +' + hours(more) + '</span>' : '<span class="pill good">переработка не растёт</span>';
+        else pills += '<span class="pill warn">переработка ' + hours(s.overtime) + ' на ' + s.overtimeVehicles + ' вод.</span>';
         if (s.late.length) pills += '<span class="pill warn">опоздают ' + s.late.length + ' точ.</span>';
-        html += '<article class="variant"><h3>' + esc(v.name) + '</h3><div class="route-flags">' + pills + '</div><ul>' +
-          v.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
-          '<button type="button" class="btn primary" data-pick="' + n + '">Показать на карте</button></article>';
+        html += '<article class="variant"><h3>' + esc(v.name) + '</h3><div class="route-flags">' + pills + '</div>' +
+          '<button type="button" class="btn primary" data-pick="' + n + '">Показать на карте</button><ul>' +
+          v.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></article>';
       });
       html += '</div><p class="fm-hint">Выбранный вариант станет черновиком: он виден на карте и в маршрутах, точки из сломанной машины можно вручную передать другой. ' +
         'Водители увидят новые маршруты только после кнопки «Утвердить».</p>' +

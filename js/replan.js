@@ -180,7 +180,7 @@
       ', последняя машина вернётся в ' + clock(s.lastBack);
     if (Math.abs(s.lastBack - s.lastBackWas) >= 1) text += ' (было ' + clock(s.lastBackWas) + ')';
     text += s.overtime > 0.5 ? '. Переработка: ' + plural(s.overtimeVehicles, 'водитель', 'водителя', 'водителей') + ', всего ' + hours(s.overtime) +
-      (s.overtimeWas > 0.5 ? ' (было ' + hours(s.overtimeWas) + ')' : '') + '.' : '. Переработки нет.';
+      (s.overtimeWas > 0.5 ? (Math.abs(s.overtime - s.overtimeWas) < 1 ? ' (как и было)' : ' (было ' + hours(s.overtimeWas) + ')') : '') + '.' : '. Переработки нет.';
     lines.push(text);
     if (s.late.length) {
       lines.push('Опоздают ' + points(s.late.length) + ': ' + s.late.slice(0, 3).map(function (l) {
@@ -248,7 +248,7 @@
 
   function explainStop(P, base, plan, info) {
     var r = plan.routes[info.k], s = plan.stops[info.stop], name = shortName(P.vehicles[info.k]), lines = [];
-    if (info.action === 'drop') lines.push('Сегодня точку не доставляем: ' + num(s.kg) + ' кг вернутся на завод с этой машиной (' + name.toLowerCase() + ').');
+    if (info.action === 'drop') lines.push('Сегодня точку не доставляем: ' + num(s.kg) + ' кг вернутся на завод в машине ' + P.vehicles[info.k].id + '.');
     else r.stops.forEach(function (x, i) {
       if (x.stop === info.stop) lines.push(name + ' вернётся к точке не раньше ' + clock(info.retryAt) + ': теперь она ' + (i - r.cut + 1) + '-я из ' +
         (r.seq.length - r.cut) + ' оставшихся, разгрузка около ' + clock(x.start) + '.');
@@ -345,7 +345,10 @@
     if (info.type === 'breakdown' && first.stats.overtime > 0.5) {
       var calm = make('calm', 'Без переработки', st.overtimeToleranceMin || 0), mid = null, limit = st.replanOvertimeMin || 0;
       if (limit > (st.overtimeToleranceMin || 0) && first.stats.overtimeMax > limit) mid = make('mid', 'Переработка до ' + hours(limit), limit);
-      if (mid && mid.stats.dropped > first.stats.dropped && mid.stats.dropped < calm.stats.dropped) variants.push(mid);
+      // Средний вариант показываем, только если он правда отличается: довозит больше, чем «без переработки»,
+      // и при этом либо что-то не довозит, либо заметно снимает нагрузку с самого занятого водителя.
+      if (mid && mid.stats.dropped < calm.stats.dropped &&
+        (mid.stats.dropped > first.stats.dropped || mid.stats.overtimeMax < first.stats.overtimeMax - 5)) variants.push(mid);
       if (calm.stats.dropped > first.stats.dropped) variants.push(calm);
     }
     return { ok: true, message: '', at: T, variants: variants };
