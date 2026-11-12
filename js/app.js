@@ -641,6 +641,10 @@
       state.settings = merged; buildSettings(); queueRemote(true);
     },
     plan: function (kind, plan) {
+      // При сбросе демо планы удаляются, и весть об этом иногда приходит с опозданием.
+      // Если план здесь только что создан или утверждён (он новее сброса), запоздалое удаление его не стирает.
+      var mine = kind === 'draft' ? draft : approved;
+      if (!plan && mine && mine.at && Date.now() - new Date(mine.at).getTime() < 20000) return;
       if (kind === 'draft') {
         draft = plan;
         if (!plan) return;

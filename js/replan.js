@@ -344,7 +344,7 @@
     // Если без переработки не обошлось, считаем ещё варианты: часть точек — не сегодня, зато водители не перерабатывают.
     if (info.type === 'breakdown' && first.stats.overtime > 0.5) {
       var calm = make('calm', 'Без переработки', st.overtimeToleranceMin || 0), mid = null, limit = st.replanOvertimeMin || 0;
-      if (limit > (st.overtimeToleranceMin || 0) && first.stats.overtimeMax > limit) mid = make('mid', 'Переработка до ' + hours(limit), limit);
+      if (limit > (st.overtimeToleranceMin || 0) && first.stats.overtimeMax > limit) mid = make('mid', 'Переработка до ' + (limit % 60 ? hours(limit) : limit / 60 + ' ч'), limit);
       // Средний вариант показываем, только если он правда отличается: довозит больше, чем «без переработки»,
       // и при этом либо что-то не довозит, либо заметно снимает нагрузку с самого занятого водителя.
       if (mid && mid.stats.dropped < calm.stats.dropped &&
