@@ -82,6 +82,11 @@ main { max-width: 560px; margin: 0 auto; padding: 16px; display: grid; gap: 12px
 .stops li.st-done { opacity: .5; }
 .stops li.st-done .t::before { content: "✓ "; color: var(--good); }
 .stops li.st-arrived .t, .stops li.st-unloading .t { color: var(--accent); }
+.stops li.pickup { border: 2px dashed var(--bad); }
+.stops li.pickup .t { color: var(--bad); }
+.card.pickup-card { border-color: var(--bad); }
+.card.pickup-card .eyebrow { color: var(--bad); }
+.card.bad-card p { color: inherit; }
 .log { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
 .log li.bad { color: var(--bad); }
 

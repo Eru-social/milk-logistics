@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=7">
+<link rel="stylesheet" href="css/style.css?v=8">
 </head>
 <body>
 
@@ -29,6 +29,7 @@
     </div>
     <button type="button" id="btn-recalc" class="btn">Пересчитать</button>
     <button type="button" id="btn-approve" class="btn primary">Утвердить план</button>
+    <button type="button" id="btn-incident" class="btn danger" title="Машина сломалась, задерживается или точка не принимает товар">Форс-мажор</button>
     <button type="button" id="btn-qr" class="btn">Водителю</button>
     <button type="button" id="btn-reset" class="btn">Сбросить демо</button>
   </div>
@@ -78,6 +79,7 @@
     <div class="panel-head"><h2>Маршруты</h2><span id="status" class="status"></span></div>
     <div class="scroll">
       <div id="feed" aria-live="polite"></div>
+      <div id="incident"></div>
       <div id="problems"></div>
       <div id="routes"></div>
     </div>
@@ -93,17 +95,24 @@
     <button type="button" id="qr-close" class="btn">Закрыть</button>
   </div>
 </div>
+<div class="overlay" id="fm-overlay" hidden>
+  <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="fm-title">
+    <h2 id="fm-title">Что-то пошло не так</h2>
+    <div id="fm-body"></div>
+  </div>
+</div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-<script src="js/config.js?v=7"></script>
-<script src="js/store.js?v=7"></script>
-<script src="js/settings.js?v=7"></script>
-<script src="js/data.js?v=7"></script>
-<script src="js/solver.js?v=7"></script>
-<script src="js/map.js?v=7"></script>
-<script src="js/app.js?v=7"></script>
+<script src="js/config.js?v=8"></script>
+<script src="js/store.js?v=8"></script>
+<script src="js/settings.js?v=8"></script>
+<script src="js/data.js?v=8"></script>
+<script src="js/solver.js?v=8"></script>
+<script src="js/replan.js?v=8"></script>
+<script src="js/map.js?v=8"></script>
+<script src="js/app.js?v=8"></script>
 </body>
 </html>

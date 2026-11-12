@@ -22,6 +22,9 @@
   var PENALTY_LATE = 40;       // за каждую минуту опоздания
   var PENALTY_CENTER = 2000;   // за каждую точку центра на большой машине
   var WAIT_WEIGHT = 0.5;       // минута простоя «стоит» полминуты езды
+  // Два числа для перестроения в течение дня:
+  var OVERTIME_SPREAD = 0.2;   // переработку лучше разделить между водителями, чем повесить на одного (штраф растёт как квадрат)
+  var PICKUP_WAIT = 0.5;       // за каждую минуту, что груз ждёт перегрузки в сломанной машине: молочка ждать не должна
 
   // ---------- расстояния ----------
   function haversineKm(a, b) {
@@ -93,6 +96,7 @@
     var load = 0, center = 0, list = withStops ? [] : null;
     for (var i = 0; i < seq.length; i++) {
       var s = P.stops[seq[i]], node = seq[i] + 1;
+      var leave = t;
       drive += M.min[prev][node]; km += M.km[prev][node];
       var arrive = t + M.min[prev][node];
       var start = Math.max(arrive, s.from);
@@ -102,7 +106,7 @@
       t = start + s.service;
       load += s.kg;
       if (s.center && veh.cap > st.centerMaxCap) center++;
-      if (list) list.push({ stop: seq[i], arrive: arrive, start: start, end: t, late: Math.max(0, start - s.due) });
+      if (list) list.push({ stop: seq[i], leave: leave, arrive: arrive, start: start, end: t, late: Math.max(0, start - s.due), km: km, drive: drive });
       prev = node;
     }
     drive += M.min[prev][0]; km += M.km[prev][0];
@@ -118,6 +122,7 @@
   }
 
   function evalRoute(P, veh, seq, withStops) {
+    if (P.live && seq.length) return evalLive(P, P.vehicles.indexOf(veh), seq, withStops);
     if (!seq.length) return { cost: 0, drive: 0, km: 0, wait: 0, late: 0, delay: 0, underload: 0, load: 0, overload: 0, overtime: 0, center: 0,
       depart: 0, back: 0, stops: [] };
     // Выезжаем так, чтобы приехать к первой точке к её открытию, но не раньше разрешённого.
@@ -130,6 +135,118 @@
       if (b.cost < a.cost) return b;
     }
     return a;
+  }
+
+  // ---------- день уже идёт ----------
+  // Когда машины уже в рейсе, план нельзя считать с нуля. К плану прикладывается «снимок дня» (live):
+  //   now       — время снимка, минуты от полуночи;
+  //   vehicles  — по каждой машине: t — когда началась разгрузка в уже сделанных точках,
+  //               ready и pos — когда и где машина освободится, depart — когда выехала,
+  //               back — когда вернулась на завод, broken — сломана и дальше не едет;
+  //   from      — у каких остановок груз лежит в сломанной машине и где она стоит (перед ними нужна перегрузка);
+  //   retry     — к каким остановкам вернуться не раньше указанного времени;
+  //   dropped   — какие остановки сегодня не доставляем.
+  // Остановки и места здесь записаны номером первого заказа остановки, 0 — завод.
+  function applyLive(P, live) {
+    var st = P.st, now = live.now || 0;
+    function node(oid) { return oid && P.stopOf[oid] !== undefined ? P.stopOf[oid] + 1 : 0; }
+    P.live = live; P.now = now;
+    P.lv = P.vehicles.map(function (v) {
+      var r = (live.vehicles || {})[v.id];
+      // Машины, которой в снимке нет (её добавили позже), считаем резервной: она на заводе и скоро готова.
+      if (!r) return { t: {}, ready: now + st.reserveReadyMin, node: 0, km: 0, drive: 0, depart: now + st.reserveReadyMin, broken: false };
+      return { t: r.t || {}, ready: r.ready || 0, node: node(r.pos), km: r.km || 0, drive: r.drive || 0,
+        depart: r.depart || 0, back: r.back, broken: !!r.broken };
+    });
+    P.src = P.stops.map(function () { return -1; });       // -1 — груз уже в своей машине
+    Object.keys(live.from || {}).forEach(function (oid) {
+      if (P.stopOf[oid] !== undefined) P.src[P.stopOf[oid]] = node(live.from[oid]);
+    });
+    P.dropped = {};
+    (live.dropped || []).forEach(function (oid) { if (P.stopOf[oid] !== undefined) P.dropped[P.stopOf[oid]] = true; });
+    Object.keys(live.retry || {}).forEach(function (oid) {
+      var s = P.stops[P.stopOf[oid]];
+      if (!s) return;
+      s.from = Math.max(s.from, live.retry[oid]);
+      s.due = s.important ? s.from + st.importantWindowMin : Math.max(s.due, st.dayEnd);
+    });
+  }
+
+  // Сколько остановок в начале маршрута уже сделано (их время известно и не меняется).
+  function cutOf(P, k, seq) {
+    var t = P.lv[k].t, cut = 0;
+    while (cut < seq.length && t[P.stops[seq[cut]].orders[0].id] !== undefined) cut++;
+    return cut;
+  }
+
+  // ХВОСТ МАРШРУТА: то, что машине ещё предстоит, начиная с места и времени, где она освободится.
+  // Если груз остановки лежит в сломанной машине, перед первой такой остановкой заезжаем
+  // на перегрузку и забираем сразу всё, что этой машине оттуда везти.
+  function liveTail(P, k, tail, list) {
+    var st = P.st, M = P.M, lv = P.lv[k], veh = P.vehicles[k];
+    var t = lv.ready, prev = lv.node, drive = 0, km = 0, wait = 0, late = 0, delay = 0, center = 0;
+    var load = 0, peak = 0, hold = 0, seen = null, i, j, back;
+    if (lv.broken) {                                        // сломанная машина никуда не едет
+      return { cost: tail.length * 1e9, drive: 0, km: 0, wait: 0, late: 0, delay: 0, center: 0, peak: 0, overload: 0, overtime: 0, back: lv.ready };
+    }
+    if (!tail.length) {
+      if (lv.back !== undefined) back = lv.back;            // уже вернулась
+      else if (prev === 0) back = t;                        // стоит на заводе
+      else { drive = M.min[prev][0]; km = M.km[prev][0]; back = t + drive; }
+    } else {
+      for (i = 0; i < tail.length; i++) if (P.src[tail[i]] < 0) load += P.stops[tail[i]].kg;
+      peak = load;
+      for (i = 0; i < tail.length; i++) {
+        var s = P.stops[tail[i]], node = tail[i] + 1, p = P.src[tail[i]], pick = null, leave = t;
+        if (p >= 0 && !(seen && seen[p])) {                 // перегрузка из сломанной машины
+          (seen = seen || {})[p] = true;
+          var take = 0, count = 0;
+          for (j = i; j < tail.length; j++) if (P.src[tail[j]] === p) { take += P.stops[tail[j]].kg; count++; }
+          drive += M.min[prev][p]; km += M.km[prev][p];
+          var pa = t + M.min[prev][p];
+          hold += pa - P.now;
+          t = pa + st.transferMin; load += take; peak = Math.max(peak, load);
+          pick = { node: p, arrive: pa, end: t, kg: take, count: count, load: load };
+          prev = p;
+        }
+        drive += M.min[prev][node]; km += M.km[prev][node];
+        var arrive = t + M.min[prev][node];
+        var start = Math.max(arrive, s.from);
+        wait += start - arrive;
+        if (s.from > 0) delay += start - s.from;
+        if (start > s.due) late += start - s.due;
+        t = start + s.service; load -= s.kg;
+        if (s.center && veh.cap > st.centerMaxCap) center++;
+        if (list) list.push({ stop: tail[i], leave: leave, arrive: arrive, start: start, end: t, late: Math.max(0, start - s.due),
+          km: lv.km + km, drive: lv.drive + drive, pickup: pick });
+        prev = node;
+      }
+      drive += M.min[prev][0]; km += M.km[prev][0];
+      back = t + M.min[prev][0];
+    }
+    var overtime = Math.max(0, st.loadMin + back - lv.depart - st.shiftMin);
+    var overload = Math.max(0, peak - veh.cap);
+    var cost = drive + WAIT_WEIGHT * wait + st.delayWeight * delay + PENALTY_OVERTIME * overtime + PENALTY_LATE * late +
+      OVERLOAD_STRICT * overload + PENALTY_CENTER * center + OVERTIME_SPREAD * overtime * overtime + PICKUP_WAIT * hold;
+    // Вариант «без переработки»: смену длиннее разрешённого считаем недопустимой.
+    if (P.overtimeCap !== undefined && overtime > P.overtimeCap) cost += 1e7 * (1 + overtime - P.overtimeCap);
+    return { cost: cost, drive: drive, km: km, wait: wait, late: late, delay: delay, center: center, peak: peak,
+      overload: overload, overtime: overtime, back: back };
+  }
+
+  // Весь маршрут в идущем дне: сделанное берём из снимка как есть, хвост считаем заново.
+  function evalLive(P, k, seq, withStops) {
+    var lv = P.lv[k], cut = cutOf(P, k, seq), list = withStops ? [] : null, load = 0, i;
+    for (i = 0; i < seq.length; i++) load += P.stops[seq[i]].kg;
+    if (list) for (i = 0; i < cut; i++) {
+      var s = P.stops[seq[i]], ts = lv.t[s.orders[0].id];
+      list.push({ stop: seq[i], leave: ts, arrive: ts, start: ts, end: i === cut - 1 ? Math.max(lv.ready, ts) : ts + s.service,
+        late: 0, km: lv.km, drive: lv.drive, fixed: true });
+    }
+    var e = liveTail(P, k, seq.slice(cut), list);
+    return { cost: e.cost, drive: lv.drive + e.drive, km: lv.km + e.km, wait: e.wait, late: e.late, delay: e.delay, slack: 0,
+      load: load, peak: e.peak, overload: e.overload, underload: 0, overtime: e.overtime, center: e.center,
+      depart: lv.depart, back: e.back, stops: list, cut: cut, broken: lv.broken };
   }
 
   // ---------- шаг 2: стартовый план ----------
@@ -303,8 +420,9 @@
     var best = 1e18, bestK = -1, bestJ = 0;
     routes.forEach(function (r, k) {
       if (onlyK !== undefined && k !== onlyK) return;
+      if (P.live && P.lv[k].broken) return;
       var base = evalRoute(P, P.vehicles[k], r).cost;
-      for (var j = 0; j <= r.length; j++) {
+      for (var j = P.live ? cutOf(P, k, r) : 0; j <= r.length; j++) {
         var t = r.slice(0, j); t.push(stop); t = t.concat(r.slice(j));
         var d = evalRoute(P, P.vehicles[k], t).cost - base;
         if (d < best) { best = d; bestK = k; bestJ = j; }
@@ -322,6 +440,11 @@
       var r = { vehicle: v, seq: seq, km: e.km, driveMin: e.drive, depart: e.depart, back: e.back, load: e.load,
         loadPct: v.cap ? e.load / v.cap * 100 : 0, overtime: e.overtime, overload: e.overload, late: e.late,
         center: e.center, wait: e.wait, stops: e.stops };
+      if (P.live) {
+        r.live = true; r.cut = e.cut || 0; r.broken = P.lv[k].broken; r.returned = P.lv[k].back !== undefined && r.cut === seq.length;
+        // В идущем дне полоска загрузки показывает, сколько груза в кузове впереди (с учётом перегрузки).
+        if (r.cut < seq.length && v.cap) r.loadPct = e.peak / v.cap * 100;
+      }
       out.routes.push(r);
       if (!seq.length) return;
       out.used++; out.km += e.km; out.driveMin += e.drive; out.overtimeMin += e.overtime;
@@ -346,12 +469,15 @@
     return out.overtimeMin > 0.5 || out.lateStops > 0 || out.overloadKg > 0.5 || out.underloaded > 0 || out.centerViolations > 0;
   }
 
-  function prepare(input) {
+  function prepare(input, live) {
     var st = input.settings;
     var stops = buildStops(input.orders, st);
     var vehicles = input.vehicles.filter(function (v) { return v.active !== false && v.cap > 0; });
     var points = [input.depot].concat(stops);
-    return { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roads) };
+    var P = { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roads), stopOf: {} };
+    stops.forEach(function (s, i) { s.orders.forEach(function (o) { P.stopOf[o.id] = i; }); });
+    if (live) applyLive(P, live);
+    return P;
   }
 
   // ГЛАВНАЯ ФУНКЦИЯ: строит оптимизированный план.
@@ -394,6 +520,13 @@
     P.stops.forEach(function (s) { totalKg += s.kg; });
     P.vehicles.forEach(function (v) { totalCap += v.cap; });
     out.stops = P.stops; out.totalKg = totalKg; out.totalCap = totalCap; out.byRoad = P.M.byRoad;
+    out.live = P.live || null; out.dropped = [];
+    if (P.live) {
+      var droppedKg = 0;
+      P.stops.forEach(function (s, i) { if (P.dropped[i]) { out.dropped.push(i); droppedKg += s.kg; } });
+      if (out.dropped.length) out.problems.unshift('Сегодня не доставим: ' + out.dropped.length + ' точ., ' + Math.round(droppedKg) + ' кг');
+      return out;                                           // вместимость «на весь день» в идущем дне уже не важна
+    }
     if (totalKg > totalCap) out.problems.unshift('Груз не помещается в машины: лишних ' + Math.round(totalKg - totalCap) + ' кг');
     return out;
   }
@@ -408,10 +541,11 @@
   // КОРОТКАЯ ЗАПИСЬ → ПЛАН. Считает время и нарушения для готового распределения, ничего не переставляя.
   // Если данные успели измениться (новая точка, машину сняли), лишние точки вставляются в самое дешёвое место.
   // move = { orderId, vehicleId } — логист вручную переносит остановку в другую машину.
-  function fromAssignment(input, assignment, move) {
-    var P = prepare(input), stopOf = {}, vIndex = {}, used = {};
-    P.stops.forEach(function (s, i) { s.orders.forEach(function (o) { stopOf[o.id] = i; }); });
+  // live — снимок дня, если машины уже в рейсе (см. «день уже идёт»).
+  function fromAssignment(input, assignment, move, live) {
+    var P = prepare(input, live), stopOf = P.stopOf, vIndex = {}, used = {};
     P.vehicles.forEach(function (v, k) { vIndex[v.id] = k; });
+    if (P.live) Object.keys(P.dropped).forEach(function (i) { used[i] = true; });
     var routes = P.vehicles.map(function () { return []; });
     var moved = move && stopOf[move.orderId] !== undefined ? stopOf[move.orderId] : -1;
     (assignment || []).forEach(function (a) {
@@ -422,6 +556,13 @@
         if (i === undefined || used[i] || i === moved) return;
         used[i] = true; routes[k].push(i);
       });
+    });
+    // В идущем дне сделанные остановки всегда стоят в начале маршрута, в том порядке, как их проехали.
+    if (P.live) routes = routes.map(function (r, k) {
+      var t = P.lv[k].t, done = [], rest = [];
+      r.forEach(function (i) { (t[P.stops[i].orders[0].id] !== undefined ? done : rest).push(i); });
+      done.sort(function (a, b) { return t[P.stops[a].orders[0].id] - t[P.stops[b].orders[0].id]; });
+      return done.concat(rest);
     });
     if (moved >= 0 && vIndex[move.vehicleId] !== undefined) { used[moved] = true; insertCheapest(P, routes, moved, vIndex[move.vehicleId]); }
     var leftover = 0;
@@ -457,7 +598,9 @@
     return finish(P, describe(P, routes));
   }
 
-  var api = { solve: solve, naive: naive, fromAssignment: fromAssignment, toAssignment: toAssignment, haversineKm: haversineKm };
+  var api = { solve: solve, naive: naive, fromAssignment: fromAssignment, toAssignment: toAssignment, haversineKm: haversineKm,
+    // Внутренние части для перестроения в течение дня (js/replan.js).
+    core: { prepare: prepare, liveTail: liveTail, cutOf: cutOf, describe: describe, finish: finish } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') window.MilkSolver = api;
 })();

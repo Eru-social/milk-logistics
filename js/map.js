@@ -7,7 +7,7 @@
   var STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
   var ROAD_URL = 'https://router.project-osrm.org/route/v1/driving/';   // открытый демо-сервер дорог, только для прототипа
   var el, map = null, mode = 'none', ready = false, lastModel = null, onPick = null, depotMarker = null, popup = null;
-  var roadCache = {};
+  var roadCache = {}, markPins = [];
 
   function init(element, depot, pickHandler) {
     el = element; onPick = pickHandler;
@@ -64,7 +64,9 @@
 
   function empty() { return { type: 'FeatureCollection', features: [] }; }
 
-  // model = { depot, selected, routes: [{ k, color, name, road, points: [{lat, lon, n, html}] }] }
+  // model = { depot, selected, routes: [{ k, color, name, road, open, points: [{lat, lon, n, html}], path }], marks: [{lat, lon, title}] }
+  // open — маршрут не возвращается на завод (сломанная машина); path — через что идёт линия, если это не только остановки;
+  // marks — крестики на карте (где стоит сломанная машина).
   function draw(model, fit) {
     lastModel = model;
     if (mode === 'svg') return drawSvg(model);
@@ -78,12 +80,13 @@
     model.routes.forEach(function (r) {
       var sel = r.k === model.selected, dim = hasSel && !sel;
       var coords = [[model.depot.lon, model.depot.lat]];
+      (r.path || r.points).forEach(function (p) { coords.push([p.lon, p.lat]); });
       r.points.forEach(function (p) {
-        coords.push([p.lon, p.lat]); grow(p.lon, p.lat);
+        grow(p.lon, p.lat);
         pts.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
           properties: { k: r.k, color: p.color || r.color, sel: sel, dim: dim, n: String(p.n), html: p.html } });
       });
-      coords.push([model.depot.lon, model.depot.lat]);
+      if (!r.open) coords.push([model.depot.lon, model.depot.lat]);
       lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.road || coords },
         properties: { k: r.k, color: r.color, sel: sel, dim: dim, pending: !r.road } });
     });
@@ -92,6 +95,11 @@
     pts.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
     map.getSource('routes').setData({ type: 'FeatureCollection', features: lines });
     map.getSource('stops').setData({ type: 'FeatureCollection', features: pts });
+    markPins.forEach(function (m) { m.remove(); });
+    markPins = (model.marks || []).map(function (m) {
+      var pin = document.createElement('div'); pin.className = 'broken-pin'; pin.title = m.title; pin.textContent = '✕';
+      return new maplibregl.Marker({ element: pin }).setLngLat([m.lon, m.lat]).addTo(map);
+    });
     if (fit && box) { map.resize(); map.fitBounds([[box[0], box[1]], [box[2], box[3]]], { padding: 40, duration: 0 }); }
   }
 
@@ -112,7 +120,7 @@
       var sel = r.k === model.selected, dim = hasSel && !sel, s = '';
       var d = 'M' + X(model.depot) + ' ' + Y(model.depot);
       if (r.road) r.road.forEach(function (c) { d += ' L' + X({ lon: c[0], lat: c[1] }) + ' ' + Y({ lon: c[0], lat: c[1] }); });
-      else { r.points.forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); }); d += ' Z'; }
+      else { (r.path || r.points).forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); }); if (!r.open) d += ' Z'; }
       s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : (r.road ? 2 : 1.2)) +
         '"' + (r.road ? '' : ' stroke-dasharray="2 6"') + ' stroke-linejoin="round" opacity="' + (dim ? 0.3 : 0.85) + '" style="cursor:pointer"/>';
       r.points.forEach(function (p) {
@@ -123,7 +131,10 @@
       if (sel) front += s; else back += s;
     });
     var depot = '<rect x="' + (X(model.depot) - 9) + '" y="' + (Y(model.depot) - 9) + '" width="18" height="18" rx="4" fill="var(--ink)" stroke="#fff" stroke-width="2.5"><title>Завод, Гаспадарчая, 28</title></rect>';
-    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Схема маршрутов">' + back + front + depot + '</svg>';
+    var crosses = (model.marks || []).map(function (m) {
+      return '<text x="' + X(m) + '" y="' + (+Y(m) + 7) + '" text-anchor="middle" font-size="22" font-weight="700" fill="#c22b38" stroke="#fff" stroke-width="1" paint-order="stroke">✕<title>' + m.title + '</title></text>';
+    }).join('');
+    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Схема маршрутов">' + back + front + depot + crosses + '</svg>';
     el.querySelectorAll('[data-k]').forEach(function (node) {
       node.addEventListener('click', function () { if (onPick) onPick(+node.getAttribute('data-k')); });
     });
@@ -156,16 +167,16 @@
         km: j.routes[0].distance / 1000, min: j.routes[0].duration / 60 };
     }).catch(function () { return null; });
   }
-  function roadPath(depot, points) {
-    return [depot].concat(points, [depot]).map(function (p) { return p.lon.toFixed(5) + ',' + p.lat.toFixed(5); }).join(';');
+  function roadPath(depot, points, open) {       // open — без возвращения на завод
+    return [depot].concat(points, open ? [] : [depot]).map(function (p) { return p.lon.toFixed(5) + ',' + p.lat.toFixed(5); }).join(';');
   }
   // Уже известная линия (без запроса) или null.
-  function roadCached(depot, points) {
-    var path = roadPath(depot, points);
+  function roadCached(depot, points, open) {
+    var path = roadPath(depot, points, open);
     return roadCache[path] || readStored()[path] || null;
   }
-  function roadRoute(depot, points) {
-    var path = roadPath(depot, points), hit = roadCached(depot, points);
+  function roadRoute(depot, points, open) {
+    var path = roadPath(depot, points, open), hit = roadCached(depot, points, open);
     if (hit) { roadCache[path] = hit; return Promise.resolve(hit); }
     var result = queue.then(function () {
       if (roadCache[path]) return roadCache[path];

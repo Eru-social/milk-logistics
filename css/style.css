@@ -179,6 +179,43 @@ button, input { font: inherit; color: inherit; }
 #qr-link { color: var(--accent); font-size: 12.5px; overflow-wrap: anywhere; }
 #qr-note { color: var(--muted); font-size: 13px; }
 
+/* ---------- форс-мажор: перестроение в течение дня ---------- */
+.btn.danger { color: var(--bad); border-color: var(--bad); }
+.btn.danger:hover { background: var(--bad-soft); }
+.link { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; padding: 0 2px; cursor: pointer; text-decoration: underline; }
+.dialog.wide { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow: auto; justify-items: stretch; text-align: left; }
+#fm-body { display: grid; gap: 12px; }
+.fm-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: center; }
+.fm-row > span { color: var(--muted); font-size: 13px; }
+.fm-row select, .fm-row input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; max-width: 100%; }
+.fm-row input { width: 130px; }
+.fm-row .seg { flex-wrap: wrap; justify-self: start; }
+.fm-status { background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 8px 10px; font-weight: 500; }
+.fm-lead { font-weight: 600; }
+.fm-error { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 8px 10px; font-weight: 500; }
+.fm-hint { color: var(--muted); font-size: 12.5px; }
+.fm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; align-items: start; }
+.variant { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+.variant h3 { margin: 0; font: 600 14px var(--font-display); }
+.variant ul, .incident ul { margin: 0; padding-left: 18px; font-size: 12.5px; display: grid; gap: 4px; }
+.incident { border: 1px solid var(--line); border-left: 5px solid var(--good); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 6px; font-size: 13px; }
+.incident.pending { border-left-color: var(--warn); background: var(--warn-soft); }
+.incident p { color: var(--muted); font-size: 12.5px; }
+.incident.pending p { color: var(--warn); font-weight: 500; }
+.incident p.incident-old { color: var(--muted); font-weight: 400; }
+.incident-actions { display: flex; gap: 8px; }
+.route.broken { opacity: .8; }
+.route ol li.pickup { display: block; margin-left: -18px; color: var(--warn); font-weight: 500; }
+.dropped { border: 1px solid var(--bad); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; }
+.dropped b { color: var(--bad); font-size: 13px; }
+.dropped ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.dropped span { color: var(--muted); }
+.dropped select.move { display: block; margin-top: 4px; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); max-width: 100%; }
+.broken-pin { width: 24px; height: 24px; border-radius: 50%; background: var(--bad); color: #fff; border: 3px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+  display: grid; place-items: center; font: 700 12px/1 var(--font-body); }
+@media (max-width: 520px) { .fm-row { grid-template-columns: minmax(0, 1fr); } }
+
 /* ---------- узкие экраны ---------- */
 @media (max-width: 1180px) {
   html, body { height: auto; }

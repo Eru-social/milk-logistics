@@ -26,7 +26,42 @@
     plan = null;
     if (!data || !data.approved) return;
     var settings = Object.assign({}, DEFAULTS, data.settings || {});
-    plan = window.MilkSolver.fromAssignment({ depot: DATA.depot, orders: data.orders, vehicles: data.vehicles, settings: settings, roads: data.roads }, data.approved.assignment);
+    // Если план перестраивали в течение дня, к нему приложен «снимок дня» (см. js/replan.js): с ним и считаем.
+    var live = (data.approved.summary && data.approved.summary.live) || null;
+    plan = window.MilkSolver.fromAssignment({ depot: DATA.depot, orders: data.orders, vehicles: data.vehicles, settings: settings, roads: data.roads },
+      data.approved.assignment, null, live);
+  }
+
+  // ---------- если день перестроили ----------
+  function placeOf(node) { return node ? plan.stops[node - 1] : DATA.depot; }
+  function placeText(node) { return node ? plan.stops[node - 1].address + ' (у точки «' + plan.stops[node - 1].orders[0].name + '»)' : 'на заводе'; }
+  function movedFrom(orderId) {            // из какой машины пришла точка (0 — она всегда была нашей)
+    var moved = (plan.live && plan.live.moved) || {};
+    return moved[orderId] !== undefined && moved[orderId] !== vehicleId ? moved[orderId] : 0;
+  }
+  // Машина сломана: показываем водителю, кто и когда приедет за грузом.
+  function brokenCard(route) {
+    var rec = plan.live.vehicles[vehicleId] || {}, node = 0, helpers = [];
+    plan.stops.forEach(function (s, i) { if (s.orders[0].id === rec.pos) node = i + 1; });
+    plan.routes.forEach(function (r) {
+      r.stops.forEach(function (x) {
+        if (x.pickup && x.pickup.node === node) helpers.push({ name: r.vehicle.name, at: x.pickup.arrive, count: x.pickup.count, kg: x.pickup.kg });
+      });
+    });
+    helpers.sort(function (a, b) { return a.at - b.at; });
+    var html = '<div class="card bad-card"><b>Машина снята с маршрута в ' + clock(route.back) + '</b>' +
+      '<p>Оставайтесь на месте. ' + (helpers.length ? 'За грузом приедут:' : 'Диспетчер решает, что делать с грузом.') + '</p>';
+    if (helpers.length) html += '<ul class="log">' + helpers.map(function (h) {
+      return '<li><b>около ' + clock(h.at) + '</b> ' + esc(h.name) + ' · ' + h.count + ' точ., ' + num(h.kg) + ' кг</li>';
+    }).join('') + '</ul>';
+    return html + '</div>';
+  }
+  function pickupCard(x) {                 // перед этой точкой нужно забрать груз из сломанной машины
+    var p = placeOf(x.pickup.node), from = movedFrom(plan.stops[x.stop].orders[0].id);
+    return '<section class="card now pickup-card"><span class="eyebrow">Сначала перегрузка · около ' + clock(x.pickup.arrive) + '</span>' +
+      '<h2>Заберите груз из сломанной машины' + (from ? ' ' + from : '') + '</h2>' +
+      '<p>' + esc(placeText(x.pickup.node)) + ' · ' + x.pickup.count + ' точ., ' + num(x.pickup.kg) + ' кг</p>' +
+      '<a class="nav-link" href="https://yandex.by/maps/?rtext=~' + p.lat + ',' + p.lon + '&rtt=auto" target="_blank" rel="noopener">Открыть в Яндекс Картах</a></section>';
   }
   function myRoute() {
     if (!plan) return null;
@@ -84,6 +119,12 @@
       html += '<div class="card"><b>Маршрут ещё не утверждён</b><p>Логист утверждает план на экране диспетчера. Страница обновится сама.</p></div>';
       app.innerHTML = html; return;
     }
+    if (route && route.broken) {
+      html += brokenCard(route) + '<button type="button" class="btn danger-outline big" id="btn-problem">Сообщить о проблеме</button>';
+      app.innerHTML = html;
+      $('btn-problem').onclick = function () { openSheet(null); };
+      return;
+    }
     if (!route || !route.seq.length) {
       html += '<div class="card"><b>На сегодня маршрута нет</b><p>Эта машина остаётся в гараже по утверждённому плану.</p></div>';
       app.innerHTML = html; return;
@@ -95,6 +136,7 @@
 
     if (pr.current >= 0 && pr.departed) {
       var x = route.stops[pr.current], s = plan.stops[x.stop];
+      if (x.pickup && !pr.stopStatus[s.orders[0].id]) html += pickupCard(x);
       html += '<section class="card now"><span class="eyebrow">Точка ' + (pr.current + 1) + ' из ' + route.seq.length + ' · по плану ' + clock(x.start) + '</span>' +
         '<h2>' + esc(s.orders.map(function (o) { return o.name; }).join(' + ')) + '</h2>' +
         '<p>' + esc(s.address) + ' · ' + num(s.kg) + ' кг</p>' +
@@ -106,10 +148,12 @@
 
     html += '<h3 class="list-title">Все точки</h3><ol class="stops">';
     route.stops.forEach(function (x, i) {
-      var s = plan.stops[x.stop], st = pr.stopStatus[s.orders[0].id];
+      var s = plan.stops[x.stop], st = pr.stopStatus[s.orders[0].id], from = movedFrom(s.orders[0].id);
+      if (x.pickup) html += '<li class="pickup"><span class="t">' + clock(x.pickup.arrive) + '</span><span class="w"><b>Перегрузка из сломанной машины</b><small>' +
+        esc(placeText(x.pickup.node)) + ' · ' + x.pickup.count + ' точ., ' + num(x.pickup.kg) + ' кг</small></span></li>';
       html += '<li class="' + (st ? 'st-' + st : '') + (i === pr.current && pr.departed ? ' cur' : '') + '"><span class="t">' + clock(x.start) + '</span>' +
         '<span class="w"><b>' + esc(s.orders.map(function (o) { return o.name; }).join(' + ')) + '</b><small>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' +
-        (st ? ' · ' + esc(KIND[st].toLowerCase()) : '') + '</small></span></li>';
+        (from ? ' · из машины ' + from : '') + (st ? ' · ' + esc(KIND[st].toLowerCase()) : '') + '</small></span></li>';
     });
     html += '</ol>';
     var last = pr.events.slice(-3).reverse();

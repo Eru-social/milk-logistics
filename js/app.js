@@ -58,25 +58,42 @@
   }
 
   // ---------- расчёт ----------
-  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length, byRoad: !!p.byRoad }; }
+  // Снимок дня: он есть у плана, который перестраивали, когда машины уже в рейсе (см. js/replan.js).
+  // У плана из базы снимок лежит внутри summary.
+  function liveOf(p) { return p ? (p.live || (p.summary && p.summary.live) || null) : null; }
+  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length, byRoad: !!p.byRoad, live: p.live || null }; }
+  // Показанный план становится общим черновиком: его видят все экраны диспетчера.
+  function shareDraft() {
+    draft = { assignment: window.MilkSolver.toAssignment(plans.best), live: plans.best.live || null, at: new Date().toISOString() };
+    Store.saveDraft(draft.assignment, summaryOf(plans.best));
+    saveLocal();
+  }
 
   // Считаем новый план здесь и делимся им со всеми экранами.
   function solveAndShare() {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
     plans.best = window.MilkSolver.solve(input());
     plans.naive = window.MilkSolver.naive(input());
-    draft = { assignment: window.MilkSolver.toAssignment(plans.best), at: new Date().toISOString() };
-    Store.saveDraft(draft.assignment, summaryOf(plans.best));
-    saveLocal();
+    shareDraft();
     selected = -1;
     render(true);
     setStatus('расчёт за ' + num(plans.best.ms / 1000, 1) + ' с');
   }
-  function schedule() { clearTimeout(solveTimer); setStatus('Считаю…'); solveTimer = setTimeout(solveAndShare, 350); }
+  // День уже идёт: с нуля считать нельзя (машины в рейсе), поэтому только обновляем время и нарушения.
+  function refreshLive() {
+    clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
+    plans.best = window.MilkSolver.fromAssignment(input(), draft.assignment, null, liveOf(draft));
+    plans.naive = window.MilkSolver.naive(input());
+    shareDraft();
+    render(false);
+    setStatus('день идёт: маршруты с нуля не строятся');
+  }
+  function recalc() { if (liveOf(draft)) refreshLive(); else solveAndShare(); }
+  function schedule() { clearTimeout(solveTimer); setStatus('Считаю…'); solveTimer = setTimeout(recalc, 350); }
 
   // Показываем общий черновик как есть, без нового расчёта (так все экраны видят один и тот же план).
   function showDraft(message) {
-    plans.best = window.MilkSolver.fromAssignment(input(), draft.assignment);
+    plans.best = window.MilkSolver.fromAssignment(input(), draft.assignment, null, liveOf(draft));
     plans.naive = window.MilkSolver.naive(input());
     if (selected >= plans.best.routes.length) selected = -1;
     render(false);
@@ -96,7 +113,7 @@
     var p = plans[view];
     if (!p) return;
     var idx = eventIndex();
-    renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderProblems(p); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
+    renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
   }
 
   function renderMeta() {
@@ -106,9 +123,14 @@
       plural(plans.best.stopsTotal, 'остановка', 'остановки', 'остановок') + ' · ' + num(kg / 1000, 1) + ' т';
   }
 
+  // Короткая «подпись» плана: по ней видно, совпадает ли черновик с утверждённым.
+  function planKey(p) {
+    var live = liveOf(p);
+    return p.assignment.map(function (a) { return a.v + ':' + a.s.join(','); }).join('|') + '|' + (live ? live.id : '');
+  }
   function approvalState() {
     if (!approved) return 'none';
-    return draft && JSON.stringify(approved.assignment) === JSON.stringify(draft.assignment) ? 'same' : 'changed';
+    return draft && planKey(approved) === planKey(draft) ? 'same' : 'changed';
   }
   function renderApproval() {
     var s = approvalState(), pill = $('approval'), btn = $('btn-approve');
@@ -135,7 +157,8 @@
       'Сейчас около ' + num(refKm) + ' км: ' + st.refKmPerRoute + ' км × ' + plans.naive.used + ' маршрутов, со слов логистов');
     html += tile('Машин на линии', p.used, 'из ' + active,
       p.used < active ? '<span class="pill good">' + (active - p.used) + ' в гараже</span>' : '',
-      'Средняя загрузка ' + num(p.used ? loadSum / p.used : 0) + '%, правило: не ниже ' + st.minLoadPct + '%');
+      p.live ? 'День идёт: снимок на ' + clock(p.live.now) + ', уже сделанное не меняется' :
+        'Средняя загрузка ' + num(p.used ? loadSum / p.used : 0) + '%, правило: не ниже ' + st.minLoadPct + '%');
     html += tile('Самая длинная смена', hours(longest), '',
       '<span class="pill ' + (shiftExact ? 'good' : (shiftOk ? 'warn' : 'bad')) + '">' + (shiftExact ? 'в норме' : (shiftOk ? 'в допуске ' + tol + ' мин' : 'переработка')) + '</span>',
       'Норма ' + hours(st.shiftMin) + ' с загрузкой. Всего в рейсах ' + num(p.workMin / 60) + ' ч, последняя машина вернётся в ' + clock(p.lastBack));
@@ -166,9 +189,25 @@
     }
     var html = '<ul class="feed">';
     events.slice(-5).reverse().forEach(function (e) {
-      html += '<li class="' + (e.kind === 'problem' ? 'bad' : '') + '"><b>' + clockOf(e.at) + '</b> ' + esc(eventText(e)) + '</li>';
+      html += '<li class="' + (e.kind === 'problem' ? 'bad' : '') + '"><b>' + clockOf(e.at) + '</b> ' + esc(eventText(e)) +
+        (e.kind === 'problem' ? ' <button type="button" class="link" data-event="' + e.id + '">Перестроить</button>' : '') + '</li>';
     });
     $('feed').innerHTML = html + '</ul>';
+  }
+
+  // Что случилось сегодня и что предлагается: последнее происшествие с объяснением.
+  function renderBanner(p) {
+    var live = view === 'best' ? p.live : null, log = live && live.log ? live.log : [];
+    if (!log.length) { $('incident').innerHTML = ''; return; }
+    var last = log[log.length - 1], pending = approvalState() !== 'same';
+    var html = '<div class="incident' + (pending ? ' pending' : '') + '"><b>' + esc(last.title) + '</b><ul>' +
+      last.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
+    if (log.length > 1) html += '<p class="incident-old">Раньше сегодня: ' + esc(log.slice(0, -1).map(function (e) { return e.title; }).join('; ')) + '</p>';
+    html += pending ? '<p>Это предложение: водители едут по прежнему плану, пока вы его не утвердите.</p>' +
+        '<div class="incident-actions"><button type="button" class="btn primary" id="inc-approve">Утвердить</button>' +
+        '<button type="button" class="btn" id="inc-cancel">Отменить</button></div>' :
+      '<p>Утверждено в ' + clockOf(approved.at) + ': водители видят новые маршруты.</p>';
+    $('incident').innerHTML = html + '</div>';
   }
 
   function renderProblems(p) {
@@ -185,48 +224,84 @@
   function stopTitle(s) { return s.orders.map(function (o) { return o.name; }).join(' + '); }
   var STOP_MARK = { arrived: '●', unloading: '▶', done: '✓' };
 
+  function placeName(p, node) {          // место перегрузки словами
+    if (!node) return 'на заводе';
+    return 'у точки «' + p.stops[node - 1].orders[0].name + '», ' + p.stops[node - 1].address;
+  }
+  function moveSelect(oid, skipId, label, broken) {
+    var html = '<select class="move" data-oid="' + oid + '" aria-label="' + label + '"><option value="">' + label + '…</option>';
+    state.vehicles.forEach(function (v) {
+      if (v.active !== false && v.cap > 0 && v.id !== skipId && !broken[v.id]) html += '<option value="' + v.id + '">' + esc(v.name) + '</option>';
+    });
+    return html + '</select>';
+  }
+
   function renderRoutes(p, idx) {
-    var html = '', garage = [], active = state.vehicles.filter(function (v) { return v.active !== false; });
+    var html = '', garage = [], live = p.live, broken = {}, st = state.settings;
+    // Из снимка дня: у каких точек груз ещё в сломанной машине, какие пришли из другой машины, к каким вернуться позже.
+    var from = (live && live.from) || {}, moved = (live && live.moved) || {}, retry = (live && live.retry) || {};
+    p.routes.forEach(function (r) { if (r.broken) broken[r.vehicle.id] = true; });
     p.routes.forEach(function (r, k) {
-      if (!r.seq.length) { garage.push(r.vehicle.name); return; }
+      if (!r.seq.length) { garage.push(r.vehicle.name + (r.broken ? ' (сломана)' : '')); return; }
       var c = colorOf(r.vehicle.id), sel = k === selected, flags = '', last = idx.lastByVehicle[r.vehicle.id];
-      var barClass = r.overloadBad ? 'bad' : (r.loadPct < state.settings.minLoadPct ? 'warn' : '');
+      var left = live ? r.seq.length - r.cut : 0, got = 0, done = 0;
+      r.seq.forEach(function (si) {
+        var oid = p.stops[si].orders[0].id;
+        if (moved[oid] !== undefined && moved[oid] !== r.vehicle.id) got++;
+        if (idx.byStop[r.vehicle.id + ':' + oid] === 'done') done++;
+      });
+      var barClass = r.overloadBad ? 'bad' : (!live && r.loadPct < st.minLoadPct ? 'warn' : '');
+      if (r.broken) flags += '<span class="pill bad">сломалась в ' + clock(r.back) + '</span>';
+      if (got) flags += '<span class="pill warn">+' + got + ' точ. из сломанной машины</span>';
       if (r.overloadBad) flags += '<span class="pill bad">перегруз ' + num(r.overload) + ' кг</span>';
       else if (r.overload > 0.5) flags += '<span class="pill warn">+' + num(r.overload) + ' кг, в допуске</span>';
       if (r.overtimeBad) flags += '<span class="pill bad">переработка ' + num(r.overtime) + ' мин</span>';
       else if (r.overtime > 0.5) flags += '<span class="pill warn">+' + num(r.overtime) + ' мин, в допуске</span>';
       if (r.late > 0.5) flags += '<span class="pill bad">опоздание</span>';
       if (r.center > 0) flags += '<span class="pill bad">большая машина в центре</span>';
-      if (r.loadPct < state.settings.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
-      var done = 0;
-      r.seq.forEach(function (si) { if (idx.byStop[r.vehicle.id + ':' + p.stops[si].orders[0].id] === 'done') done++; });
-      var km = num(r.km, 1) + ' км';
-      html += '<div class="route' + (sel ? ' sel' : '') + '" style="--c:' + c + '">' +
+      if (!live && r.loadPct < st.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
+      // Пока день не начался, справа загрузка; когда идёт — что машине осталось.
+      var right = !live ? num(r.load) + ' / ' + num(r.vehicle.cap) + ' кг' :
+        (r.broken ? 'снята с маршрута' : (left ? 'осталось ' + left + ' точ.' : (r.returned ? 'на заводе' : 'едет на завод')));
+      html += '<div class="route' + (sel ? ' sel' : '') + (r.broken ? ' broken' : '') + '" style="--c:' + c + '">' +
         '<button type="button" class="route-head" data-k="' + k + '" aria-expanded="' + sel + '">' +
-        '<span class="route-title"><span>' + esc(r.vehicle.name) + '</span><span>' + num(r.load) + ' / ' + num(r.vehicle.cap) + ' кг</span></span>' +
+        '<span class="route-title"><span>' + esc(r.vehicle.name) + '</span><span>' + right + '</span></span>' +
         '<span class="bar ' + barClass + '"><i style="width:' + Math.min(100, r.loadPct).toFixed(0) + '%"></i></span>' +
-        '<span class="route-meta">' + r.seq.length + ' точ. · ' + km + ' · ' + clock(r.depart) + '–' + clock(r.back) + ' · загрузка ' + num(r.loadPct) + '%</span>' +
+        '<span class="route-meta">' + r.seq.length + ' точ. · ' + num(r.km, 1) + ' км · ' + clock(r.depart) + '–' + clock(r.back) +
+          (live ? '' : ' · загрузка ' + num(r.loadPct) + '%') + '</span>' +
         (last ? '<span class="route-now' + (last.kind === 'problem' ? ' bad' : '') + '">' + clockOf(last.at) + ' · ' + esc(KIND[last.kind]) +
           (last.note ? ': ' + esc(last.note) : '') + (done ? ' · разгружено ' + done + ' из ' + r.seq.length : '') + '</span>' : '') +
         (flags ? '<span class="route-flags">' + flags + '</span>' : '') + '</button>';
       if (sel) {
         html += '<ol>';
         r.stops.forEach(function (x) {
-          var s = p.stops[x.stop], oid = s.orders[0].id, st = idx.byStop[r.vehicle.id + ':' + oid];
-          var move = '';
-          if (view === 'best') {
-            move = '<select class="move" data-oid="' + oid + '" aria-label="Перенести в другую машину"><option value="">Перенести…</option>';
-            active.forEach(function (v) { if (v.id !== r.vehicle.id) move += '<option value="' + v.id + '">' + esc(v.name) + '</option>'; });
-            move += '</select>';
-          }
-          html += '<li class="' + (x.late > 0.5 ? 'late ' : '') + (st ? 'st-' + st : '') + '"><b>' + (st ? STOP_MARK[st] + ' ' : '') + clock(x.start) + '</b> ' +
+          var s = p.stops[x.stop], oid = s.orders[0].id, mark = idx.byStop[r.vehicle.id + ':' + oid], note = '';
+          if (x.pickup) html += '<li class="pickup"><b>⇄ ' + clock(x.pickup.arrive) + '</b> Перегрузка из сломанной машины<br><span>' +
+            esc(placeName(p, x.pickup.node)) + ' · забрать ' + x.pickup.count + ' точ., ' + num(x.pickup.kg) + ' кг</span></li>';
+          if (moved[oid] !== undefined && moved[oid] !== r.vehicle.id) note += ' · из машины ' + moved[oid];
+          if (retry[oid] !== undefined && !x.fixed) note += ' · вернуться не раньше ' + clock(retry[oid]);
+          if (x.late > 0.5) note += ' · опоздание ' + num(x.late) + ' мин';
+          // Пока день не начался, переносить можно любую точку; когда идёт — только груз, который ещё лежит в сломанной машине.
+          var canMove = view === 'best' && !x.fixed && (!live || from[oid] !== undefined);
+          html += '<li class="' + (x.late > 0.5 ? 'late ' : '') + (mark ? 'st-' + mark : (x.fixed ? 'st-done' : '')) + '"><b>' + (mark ? STOP_MARK[mark] + ' ' : '') + clock(x.start) + '</b> ' +
             (s.important ? '★ ' : '') + esc(stopTitle(s)) +
-            '<br><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' + (x.late > 0.5 ? ' · опоздание ' + num(x.late) + ' мин' : '') + '</span>' + move + '</li>';
+            '<br><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' + esc(note) + '</span>' +
+            (canMove ? moveSelect(oid, r.vehicle.id, 'Перенести', broken) : '') + '</li>';
         });
         html += '</ol>';
       }
       html += '</div>';
     });
+    if (live && p.dropped.length) {
+      html += '<div class="dropped"><b>Сегодня не доставим</b><ul>';
+      p.dropped.forEach(function (si) {
+        var s = p.stops[si], oid = s.orders[0].id;
+        html += '<li>' + (s.important ? '★ ' : '') + esc(stopTitle(s)) + '<br><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' +
+          (from[oid] !== undefined ? ' · груз в сломанной машине' : ' · груз вернётся на завод') + '</span>' +
+          (view === 'best' && from[oid] !== undefined ? moveSelect(oid, 0, 'Всё-таки отдать машине', broken) : '') + '</li>';
+      });
+      html += '</ul></div>';
+    }
     if (garage.length) html += '<p class="garage">В гараже: ' + esc(garage.join(', ')) + '</p>';
     $('routes').innerHTML = html;
   }
@@ -262,37 +337,47 @@
   }
 
   function renderMap(p, fit, idx) {
-    var routes = [], pending = 0;
+    var routes = [], marks = [], pending = 0, live = p.live, byOrder = {};
+    p.stops.forEach(function (s) { byOrder[s.orders[0].id] = s; });
     p.routes.forEach(function (r, k) {
+      if (r.broken) {                      // крестик там, где стоит сломанная машина
+        var rec = live.vehicles[r.vehicle.id], at = rec && rec.pos ? byOrder[rec.pos] : DATA.depot;
+        if (at) marks.push({ lat: at.lat, lon: at.lon, title: r.vehicle.name + ': сломалась в ' + clock(r.back) });
+      }
       if (!r.seq.length) return;
-      if (!r.road) askRoad(p, r);
+      var points = [], path = [];          // points — кружки остановок; path — через что идёт линия (с заездом на перегрузку)
+      r.stops.forEach(function (x, i) {
+        var s = p.stops[x.stop], title = stopTitle(s), st = idx.byStop[r.vehicle.id + ':' + s.orders[0].id];
+        if (x.pickup) path.push(x.pickup.node ? p.stops[x.pickup.node - 1] : DATA.depot);
+        path.push(s);
+        points.push({ lat: s.lat, lon: s.lon, n: i + 1, color: st === 'done' || x.fixed ? '#9aa8b5' : null,
+          title: esc(clock(x.start) + ' ' + title + ', ' + num(s.kg) + ' кг'),
+          html: '<b>' + esc(title) + '</b><br>' + esc(s.address) + '<br>' + esc(r.vehicle.name) + ', остановка ' + (i + 1) +
+            '<br>Разгрузка с ' + clock(x.start) + ', ' + num(s.kg) + ' кг' + (x.pickup ? '<br>Перед ней перегрузка в ' + clock(x.pickup.arrive) : '') +
+            (st ? '<br>Статус: ' + esc(KIND[st].toLowerCase()) : '') });
+      });
+      if (!r.road) askRoad(p, r, path);
       if (!r.road) pending++;
-      routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null,
-        points: r.stops.map(function (x, i) {
-          var s = p.stops[x.stop], title = stopTitle(s), st = idx.byStop[r.vehicle.id + ':' + s.orders[0].id];
-          return { lat: s.lat, lon: s.lon, n: i + 1, color: st === 'done' ? '#9aa8b5' : null,
-            title: esc(clock(x.start) + ' ' + title + ', ' + num(s.kg) + ' кг'),
-            html: '<b>' + esc(title) + '</b><br>' + esc(s.address) + '<br>' + esc(r.vehicle.name) + ', остановка ' + (i + 1) +
-              '<br>Разгрузка с ' + clock(x.start) + ', ' + num(s.kg) + ' кг' + (st ? '<br>Статус: ' + esc(KIND[st].toLowerCase()) : '') };
-        }) });
+      routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null, open: !!r.broken, points: points, path: path });
     });
-    window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes }, fit);
+    window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes, marks: marks }, fit);
     var note = p.byRoad ? 'Расстояния и время посчитаны по дорогам (данные OpenStreetMap), время в пути умножено на ' +
         String(state.settings.trafficFactor).replace('.', ',') + ' как запас на пробки.' :
       'Таблицы дорог нет: расстояния оценены по прямой с поправкой ×' + String(state.settings.detour).replace('.', ',') + '.';
+    if (live) note = 'День идёт: серые точки уже пройдены' + (marks.length ? ', крестик — сломанная машина' : '') + '. ' + note;
     if (pending) note = 'Прокладываю линии по улицам, осталось маршрутов: ' + pending + '. ' + note;
     if (window.MilkMap.mode() === 'svg') note = 'Карта-подложка недоступна, показана схема. ' + note;
     $('map-note').textContent = note;
   }
 
   // Линия маршрута по улицам: берём готовую из памяти или запрашиваем один раз и перерисовываем карту.
-  function askRoad(p, r) {
-    var pts = r.stops.map(function (x) { return p.stops[x.stop]; });
-    var hit = window.MilkMap.roadCached(DATA.depot, pts);
+  // Сломанная машина на завод не возвращается, её линия обрывается на последней точке.
+  function askRoad(p, r, pts) {
+    var hit = window.MilkMap.roadCached(DATA.depot, pts, r.broken);
     if (hit) { r.road = hit.coords; return; }
     if (r.roadAsked) return;
     r.roadAsked = true;
-    window.MilkMap.roadRoute(DATA.depot, pts).then(function (res) {
+    window.MilkMap.roadRoute(DATA.depot, pts, r.broken).then(function (res) {
       if (!res) return;
       r.road = res.coords;
       if (plans[view] !== p) return;
@@ -309,15 +394,147 @@
 
   // Логист переносит остановку в другую машину. Остальное не трогаем, только пересчитываем время.
   function moveStop(orderId, vehicleId) {
-    var before = plans.best.km;
-    plans.best = window.MilkSolver.fromAssignment(input(), window.MilkSolver.toAssignment(plans.best), { orderId: orderId, vehicleId: vehicleId });
-    draft = { assignment: window.MilkSolver.toAssignment(plans.best), at: new Date().toISOString() };
-    Store.saveDraft(draft.assignment, summaryOf(plans.best));
-    saveLocal();
+    var before = plans.best.km, live = plans.best.live ? clone(plans.best.live) : null, o = orderById(orderId);
+    if (live) {                            // правка поверх перестроения; точка могла быть в списке «не доставим»
+      live.dropped = (live.dropped || []).filter(function (x) { return x !== orderId; });
+      live.id += '+';
+      if (live.log && live.log.length && o) live.log[live.log.length - 1].lines.push('Правка логиста: «' + o.name + '» передана машине ' + vehicleId + '.');
+    }
+    plans.best = window.MilkSolver.fromAssignment(input(), window.MilkSolver.toAssignment(plans.best), { orderId: orderId, vehicleId: vehicleId }, live);
+    shareDraft();
     render(false);
-    var v = vehicleById(vehicleId), d = plans.best.km - before;
-    toast('Перенесено в машину ' + v.id + '. Пробег ' + (d >= 0 ? '+' : '−') + num(Math.abs(d), 1) + ' км', plans.best.problems.length ? 'warn' : '');
+    var d = plans.best.km - before;
+    toast('Перенесено в машину ' + vehicleId + '. Пробег ' + (d >= 0 ? '+' : '−') + num(Math.abs(d), 1) + ' км', plans.best.problems.length ? 'warn' : '');
     setStatus('правка логиста');
+  }
+
+  // ---------- форс-мажор: перестроение в течение дня ----------
+  // Сам расчёт лежит в js/replan.js. Здесь только окно, где логист описывает, что случилось, и выбирает вариант.
+  // Выбранный вариант становится черновиком; водители видят его после кнопки «Утвердить».
+  var fm = null;                           // состояние окна, пока оно открыто
+  var FM_TYPES = [['breakdown', 'Сломалась машина'], ['delay', 'Задержка в пути'], ['stop', 'Точка не принимает']];
+  function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+
+  function openIncident(pre) {
+    if (!approved) { toast('Сначала утвердите план: перестраивать можно только маршруты, по которым машины уже едут.', 'warn'); return; }
+    var base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), ids = [];
+    base.routes.forEach(function (r) { if (r.seq.length && !r.broken) ids.push(r.vehicle.id); });
+    if (!ids.length) { toast('Нет машин в рейсе: перестраивать нечего.', 'warn'); return; }
+    pre = pre || {};
+    var open = selected >= 0 && plans.best.routes[selected] ? plans.best.routes[selected].vehicle.id : 0;
+    var id = ids.indexOf(pre.vehicleId) >= 0 ? pre.vehicleId : (ids.indexOf(open) >= 0 ? open : ids[0]);
+    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: 40, orderId: pre.orderId || 0, action: 'retry',
+      base: base, marks: eventIndex().byStop, ids: ids, result: null, error: '', draftChanged: approvalState() === 'changed' };
+    fm.at = window.MilkReplan.suggestTime(base, id, fm.marks, nowMin());
+    renderIncident();
+    $('fm-overlay').hidden = false;
+  }
+  function closeIncident() { $('fm-overlay').hidden = true; fm = null; }
+  // Сообщение водителя о проблеме → заготовка происшествия.
+  function incidentFromEvent(e) {
+    var note = e.note || '', type = 'delay';
+    if (note.indexOf('Поломка') === 0) type = 'breakdown';
+    else if (e.orderId && /^(Магазин закрыт|Не принимают|Негде)/.test(note)) type = 'stop';
+    return { type: type, vehicleId: e.vehicleId, orderId: e.orderId || 0 };
+  }
+
+  function stopOptions(info) {
+    if (!info.remaining.some(function (x) { return x.orderId === fm.orderId; })) fm.orderId = info.remaining.length ? info.remaining[0].orderId : 0;
+    if (!info.remaining.length) return '<option value="0">Точек впереди нет</option>';
+    return info.remaining.map(function (x) {
+      return '<option value="' + x.orderId + '"' + (x.orderId === fm.orderId ? ' selected' : '') + '>' + clock(x.at) + ' · ' + esc(x.title) + '</option>';
+    }).join('');
+  }
+  function renderIncident() {
+    if (!fm) return;
+    var html = '';
+    if (fm.result) {                       // шаг 2: варианты с объяснением
+      var many = fm.result.variants.length > 1;
+      html += '<p class="fm-lead">' + esc(fm.result.variants[0].title) + '. ' +
+        (many ? 'Довезти всё без переработки не получается, поэтому вариантов несколько. Выбор за вами.' : 'Вот что предлагается.') + '</p><div class="variants">';
+      fm.result.variants.forEach(function (v, n) {
+        var s = v.stats, pills = '';
+        pills += s.dropped ? '<span class="pill bad">не доставим ' + s.dropped + ' точ., ' + num(s.droppedKg) + ' кг</span>' : '<span class="pill good">довезём всё</span>';
+        pills += s.overtime > 0.5 ? '<span class="pill warn">переработка ' + hours(s.overtime) + ' на ' + s.overtimeVehicles + ' вод.</span>' : '<span class="pill good">без переработки</span>';
+        if (s.late.length) pills += '<span class="pill warn">опоздают ' + s.late.length + ' точ.</span>';
+        html += '<article class="variant"><h3>' + esc(v.name) + '</h3><div class="route-flags">' + pills + '</div><ul>' +
+          v.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
+          '<button type="button" class="btn primary" data-pick="' + n + '">Показать на карте</button></article>';
+      });
+      html += '</div><p class="fm-hint">Выбранный вариант станет черновиком: он виден на карте и в маршрутах, точки из сломанной машины можно вручную передать другой. ' +
+        'Водители увидят новые маршруты только после кнопки «Утвердить».</p>' +
+        '<div class="fm-actions"><button type="button" class="btn" id="fm-back">Назад</button><button type="button" class="btn" id="fm-cancel">Закрыть</button></div>';
+      $('fm-body').innerHTML = html;
+      return;
+    }
+    var info = window.MilkReplan.status(fm.base, fm.vehicleId, fm.at, fm.marks);   // шаг 1: что случилось
+    html += '<div class="fm-row"><span>Что случилось</span><div class="seg">' + FM_TYPES.map(function (t) {
+      return '<button type="button" data-type="' + t[0] + '"' + (fm.type === t[0] ? ' class="on"' : '') + '>' + t[1] + '</button>';
+    }).join('') + '</div></div>';
+    html += '<label class="fm-row" for="fm-vehicle"><span>Машина</span><select id="fm-vehicle">' + fm.ids.map(function (id) {
+      var v = vehicleById(id);
+      return '<option value="' + id + '"' + (id === fm.vehicleId ? ' selected' : '') + '>' + esc(v ? v.name : 'Машина ' + id) + '</option>';
+    }).join('') + '</select></label>';
+    html += '<label class="fm-row" for="fm-at"><span>Когда</span><input type="time" id="fm-at" value="' + clock(fm.at) + '"></label>';
+    html += '<p class="fm-status" id="fm-status">' + esc(info.text) + '</p>';
+    if (fm.type === 'delay') html += '<label class="fm-row" for="fm-delay"><span>На сколько минут</span><input type="number" id="fm-delay" min="5" step="5" value="' + fm.delayMin + '"></label>';
+    if (fm.type === 'stop') {
+      html += '<label class="fm-row" for="fm-stop"><span>Какая точка</span><select id="fm-stop">' + stopOptions(info) + '</select></label>';
+      html += '<div class="fm-row"><span>Что делаем</span><div class="seg">' +
+        '<button type="button" data-action="retry"' + (fm.action === 'retry' ? ' class="on"' : '') + '>Вернуться через ' + state.settings.retryMin + ' мин</button>' +
+        '<button type="button" data-action="drop"' + (fm.action === 'drop' ? ' class="on"' : '') + '>Не доставлять сегодня</button></div></div>';
+    }
+    if (fm.error) html += '<p class="fm-error">' + esc(fm.error) + '</p>';
+    html += '<p class="fm-hint">Время здесь — по плану, а не по часам на стене: демо показывают днём, а маршруты утренние. ' +
+      (fm.draftChanged ? 'Черновик отличается от утверждённого плана: перестроение считается от утверждённого, по нему едут водители. ' : '') +
+      'Уже сделанное не меняется, каждая машина сначала заканчивает точку, которой занята.</p>';
+    html += '<div class="fm-actions"><button type="button" class="btn" id="fm-cancel">Отмена</button>' +
+      '<button type="button" class="btn primary" id="fm-go">Предложить перестроение</button></div>';
+    $('fm-body').innerHTML = html;
+  }
+  // Поменяли время: обновляем только подсказку и список точек, чтобы поле не теряло фокус при вводе.
+  function refreshIncident() {
+    var info = window.MilkReplan.status(fm.base, fm.vehicleId, fm.at, fm.marks);
+    $('fm-status').textContent = info.text;
+    if ($('fm-stop')) $('fm-stop').innerHTML = stopOptions(info);
+  }
+  function readIncident() {               // на случай, если поле ещё в фокусе и его значение не успело записаться
+    if ($('fm-at') && $('fm-at').value) fm.at = parseClock($('fm-at').value);
+    if ($('fm-delay')) fm.delayMin = Math.max(1, +$('fm-delay').value || 0);
+    if ($('fm-stop')) fm.orderId = +$('fm-stop').value;
+  }
+  function runIncident() {
+    readIncident();
+    var res = window.MilkReplan.propose(input(), fm.base, { type: fm.type, vehicleId: fm.vehicleId, at: fm.at, delayMin: fm.delayMin,
+      orderId: fm.orderId, action: fm.action }, fm.marks);
+    if (res.ok) fm.result = res; else fm.error = res.message;
+    renderIncident();
+  }
+  function pickVariant(n) {
+    var v = fm.result.variants[n];
+    clearTimeout(solveTimer); clearTimeout(fallbackTimer);
+    plans.best = v.plan;
+    shareDraft();
+    closeIncident();
+    selected = -1;
+    if (view !== 'best') setView('best'); else render(true);
+    setStatus('перестроение за ' + num(v.plan.ms / 1000, 2) + ' с');
+    toast('Вариант «' + v.name + '» показан на карте. Проверьте и нажмите «Утвердить»: тогда его увидят водители.');
+  }
+  function cancelProposal() {
+    if (!approved) return;
+    draft = { assignment: clone(approved.assignment), live: clone(liveOf(approved)), at: new Date().toISOString() };
+    plans.best = window.MilkSolver.fromAssignment(input(), draft.assignment, null, draft.live);
+    shareDraft();
+    render(true);
+    toast('Предложение отменено: показан утверждённый план.');
+  }
+  function approvePlan() {
+    if (!draft) return;
+    approved = { assignment: clone(draft.assignment), live: clone(liveOf(draft)), at: new Date().toISOString() };
+    Store.approve(approved.assignment, summaryOf(plans.best)); saveLocal(); render(false);
+    var n = plans.best.problems.length;
+    toast(n ? 'План утверждён с нарушениями (' + n + '). Водители видят свои маршруты.' : 'План утверждён. Водители видят свои маршруты.', n ? 'warn' : '');
   }
 
   // ---------- таблица заказов ----------
@@ -363,6 +580,9 @@
     ['delayWeight', 'Важность приезда ко времени', '0 — важен только пробег; чем больше, тем раньше разгрузка', 'step'],
     ['trafficFactor', 'Запас на пробки, ×', 'Время в пути по дорогам умножается на это число. Наше допущение', 'step'],
     ['refKmPerRoute', 'Пробег маршрута сейчас, км', 'Со слов логистов, для сравнения'],
+    ['transferMin', 'Перегрузка из сломанной машины, мин', 'Для перестроения в течение дня. Наше допущение'],
+    ['retryMin', 'Вернуться к закрытой точке через, мин', 'Для перестроения в течение дня. Наше допущение'],
+    ['replanOvertimeMin', 'Умеренная переработка — до, мин', 'Для среднего варианта перестроения. Наше допущение'],
     ['fillDownTimes', 'Время в таблице действует на все точки ниже', 'Если выключить, время учитывается только у точек со звёздочкой', 'check']
   ];
   function buildSettings() {
@@ -390,7 +610,7 @@
     if (draft) showDraft('изменено на другом экране, жду новый план…');
     // Если тот экран не пришлёт план за 8 секунд, считаем сами.
     clearTimeout(fallbackTimer);
-    fallbackTimer = setTimeout(solveAndShare, 8000);
+    fallbackTimer = setTimeout(recalc, 8000);
   }
   var remote = {
     order: function (row, oldId) {
@@ -425,7 +645,7 @@
         if (remoteStructure) { buildOrders(); remoteStructure = false; }
         showDraft('план обновлён на другом экране');
       } else if (kind === 'approved') {
-        approved = plan; renderApproval();
+        approved = plan; render(false);
         if (plan) toast('План утверждён на другом экране в ' + clockOf(plan.at));
       }
     },
@@ -508,18 +728,52 @@
     });
     $('view-best').addEventListener('click', function () { setView('best'); });
     $('view-naive').addEventListener('click', function () { setView('naive'); });
-    $('btn-recalc').addEventListener('click', function () { setStatus('Считаю…'); setTimeout(solveAndShare, 30); });
-    $('btn-approve').addEventListener('click', function () {
-      if (!draft) return;
-      approved = { assignment: clone(draft.assignment), at: new Date().toISOString() };
-      Store.approve(approved.assignment, summaryOf(plans.best)); saveLocal(); renderApproval();
-      var n = plans.best.problems.length;
-      toast(n ? 'План утверждён с нарушениями (' + n + '). Водители видят свои маршруты.' : 'План утверждён. Водители видят свои маршруты.', n ? 'warn' : '');
+    // «Пересчитать» всегда строит план с нуля, с начала дня. Если день уже перестраивали, предупреждаем.
+    $('btn-recalc').addEventListener('click', function () {
+      var wasLive = !!liveOf(draft);
+      setStatus('Считаю…');
+      setTimeout(function () {
+        solveAndShare();
+        if (wasLive) toast('План построен заново, с начала дня: перестроение из черновика убрано.', 'warn');
+      }, 30);
     });
+    $('btn-approve').addEventListener('click', approvePlan);
+    $('btn-incident').addEventListener('click', function () { openIncident(); });
+    $('incident').addEventListener('click', function (e) {
+      if (e.target.id === 'inc-approve') approvePlan();
+      if (e.target.id === 'inc-cancel') cancelProposal();
+    });
+    $('feed').addEventListener('click', function (e) {
+      var id = e.target.getAttribute('data-event');
+      if (!id) return;
+      for (var i = 0; i < events.length; i++) if (String(events[i].id) === id) return openIncident(incidentFromEvent(events[i]));
+    });
+    $('fm-body').addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b || !fm) return;
+      if (b.id === 'fm-cancel') return closeIncident();
+      if (b.id === 'fm-back') { fm.result = null; return renderIncident(); }
+      if (b.id === 'fm-go') return runIncident();
+      if (b.hasAttribute('data-pick')) return pickVariant(+b.getAttribute('data-pick'));
+      readIncident();
+      if (b.hasAttribute('data-type')) fm.type = b.getAttribute('data-type');
+      if (b.hasAttribute('data-action')) fm.action = b.getAttribute('data-action');
+      fm.error = ''; renderIncident();
+    });
+    $('fm-body').addEventListener('change', function (e) {
+      if (!fm) return;
+      if (e.target.id === 'fm-vehicle') {
+        fm.vehicleId = +e.target.value; fm.orderId = 0; fm.error = '';
+        fm.at = window.MilkReplan.suggestTime(fm.base, fm.vehicleId, fm.marks, nowMin());
+        return renderIncident();
+      }
+      readIncident(); refreshIncident();
+    });
+    $('fm-overlay').addEventListener('click', function (e) { if (e.target === $('fm-overlay')) closeIncident(); });
     $('btn-qr').addEventListener('click', openQr);
     $('qr-close').addEventListener('click', function () { $('qr-overlay').hidden = true; });
     $('qr-overlay').addEventListener('click', function (e) { if (e.target === $('qr-overlay')) $('qr-overlay').hidden = true; });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') $('qr-overlay').hidden = true; });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { $('qr-overlay').hidden = true; if (fm) closeIncident(); } });
     $('btn-reset').addEventListener('click', resetDemo);
   }
   function setView(v) {
