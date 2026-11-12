@@ -15,7 +15,7 @@
 (function () {
   'use strict';
 
-  var PENALTY_OVERLOAD = 10;   // за каждый лишний кг
+  var PENALTY_OVERLOAD = 60;   // за каждый лишний кг (машину нельзя перегружать)
   var PENALTY_UNDERLOAD = 5;   // за каждый кг недогруза ниже обязательных 90%
   var PENALTY_OVERTIME = 40;   // за каждую минуту сверх смены
   var PENALTY_LATE = 40;       // за каждую минуту опоздания
@@ -366,7 +366,7 @@
     }
     var out = describe(P, best);
     // Если остались нарушения правил, даём плану ещё попытки (пока не кончится запас времени).
-    for (var extra = 0; extra < P.st.improveRounds && hasViolations(out) && Date.now() < hardStop && P.vehicles.length; extra++, round++) {
+    for (; hasViolations(out) && Date.now() < hardStop && P.vehicles.length; round++) {
       var again = shake(P, best, rnd, round);
       var againCost = new LocalSearch(P, again, near).run(hardStop);
       if (againCost < bestCost - 1e-6) { best = again; bestCost = againCost; out = describe(P, best); }

@@ -92,7 +92,7 @@
     pts.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
     map.getSource('routes').setData({ type: 'FeatureCollection', features: lines });
     map.getSource('stops').setData({ type: 'FeatureCollection', features: pts });
-    if (fit && box) map.fitBounds([[box[0], box[1]], [box[2], box[3]]], { padding: 40, duration: 0 });
+    if (fit && box) { map.resize(); map.fitBounds([[box[0], box[1]], [box[2], box[3]]], { padding: 40, duration: 0 }); }
   }
 
   // ---------- запасная схема ----------
