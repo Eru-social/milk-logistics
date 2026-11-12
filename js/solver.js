@@ -15,7 +15,8 @@
 (function () {
   'use strict';
 
-  var PENALTY_OVERLOAD = 60;   // за каждый лишний кг (машину нельзя перегружать)
+  var OVERLOAD_SOFT = 10, OVERLOAD_STRICT = 60;   // штраф за каждый лишний кг: обычный и строгий
+  var PENALTY_OVERLOAD = OVERLOAD_SOFT;
   var PENALTY_UNDERLOAD = 5;   // за каждый кг недогруза ниже обязательных 90%
   var PENALTY_OVERTIME = 40;   // за каждую минуту сверх смены
   var PENALTY_LATE = 40;       // за каждую минуту опоздания
@@ -353,6 +354,7 @@
   // ГЛАВНАЯ ФУНКЦИЯ: строит оптимизированный план.
   function solve(input) {
     var started = Date.now(), P = prepare(input);
+    PENALTY_OVERLOAD = OVERLOAD_SOFT;
     var routes = initialPlan(P);
     var hardStop = started + 2500;                       // страховка: дольше 2,5 секунды не считаем
     var near = buildNeighbours(P, 14);
@@ -365,12 +367,19 @@
       if (cost < bestCost - 1e-6) { best = trial; bestCost = cost; }
     }
     var out = describe(P, best);
+    // Если в плане остался перегруз, включаем строгий штраф и чиним: машину перегружать нельзя.
+    if (out.overloadKg > 0.5 && P.vehicles.length) {
+      PENALTY_OVERLOAD = OVERLOAD_STRICT;
+      bestCost = new LocalSearch(P, best, near).run(hardStop);
+      out = describe(P, best);
+    }
     // Если остались нарушения правил, даём плану ещё попытки (пока не кончится запас времени).
     for (; hasViolations(out) && Date.now() < hardStop && P.vehicles.length; round++) {
       var again = shake(P, best, rnd, round);
       var againCost = new LocalSearch(P, again, near).run(hardStop);
       if (againCost < bestCost - 1e-6) { best = again; bestCost = againCost; out = describe(P, best); }
     }
+    PENALTY_OVERLOAD = OVERLOAD_SOFT;
     finish(P, out);
     out.ms = Date.now() - started;
     return out;
