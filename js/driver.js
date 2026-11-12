@@ -26,7 +26,7 @@
     plan = null;
     if (!data || !data.approved) return;
     var settings = Object.assign({}, DEFAULTS, data.settings || {});
-    plan = window.MilkSolver.fromAssignment({ depot: DATA.depot, orders: data.orders, vehicles: data.vehicles, settings: settings }, data.approved.assignment);
+    plan = window.MilkSolver.fromAssignment({ depot: DATA.depot, orders: data.orders, vehicles: data.vehicles, settings: settings, roads: data.roads }, data.approved.assignment);
   }
   function myRoute() {
     if (!plan) return null;

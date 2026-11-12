@@ -12,7 +12,8 @@
   var plans = { best: null, naive: null };   // показанный план и «план по списку» для сравнения
   var draft = null, approved = null;         // общий черновик и утверждённый план: { assignment, at }
   var events = [];                           // события от водителей
-  var view = 'best', selected = -1, roadKm = {};
+  var roads = null;                          // таблица расстояний по дорогам из базы
+  var view = 'best', selected = -1, mapTimer = null;
   var solveTimer = null, remoteTimer = null, fallbackTimer = null, toastTimer = null;
   var remoteData = false, remoteStructure = false;
 
@@ -30,7 +31,7 @@
   function parseClock(s) { var p = String(s).split(':'); return (+p[0] || 0) * 60 + (+p[1] || 0); }
   function orderById(id) { for (var i = 0; i < state.orders.length; i++) if (state.orders[i].id === id) return state.orders[i]; return null; }
   function vehicleById(id) { for (var i = 0; i < state.vehicles.length; i++) if (state.vehicles[i].id === id) return state.vehicles[i]; return null; }
-  function input() { return { depot: DATA.depot, orders: state.orders, vehicles: state.vehicles, settings: state.settings }; }
+  function input() { return { depot: DATA.depot, orders: state.orders, vehicles: state.vehicles, settings: state.settings, roads: roads }; }
   function colorOf(vehicleId) {
     for (var i = 0; i < state.vehicles.length; i++) if (state.vehicles[i].id === vehicleId) return COLORS[i % COLORS.length];
     return '#888';
@@ -57,7 +58,7 @@
   }
 
   // ---------- расчёт ----------
-  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length }; }
+  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length, byRoad: !!p.byRoad }; }
 
   // Считаем новый план здесь и делимся им со всеми экранами.
   function solveAndShare() {
@@ -67,7 +68,7 @@
     draft = { assignment: window.MilkSolver.toAssignment(plans.best), at: new Date().toISOString() };
     Store.saveDraft(draft.assignment, summaryOf(plans.best));
     saveLocal();
-    selected = -1; roadKm = {};
+    selected = -1;
     render(true);
     setStatus('расчёт за ' + num(plans.best.ms / 1000, 1) + ' с');
   }
@@ -78,7 +79,6 @@
     plans.best = window.MilkSolver.fromAssignment(input(), draft.assignment);
     plans.naive = window.MilkSolver.naive(input());
     if (selected >= plans.best.routes.length) selected = -1;
-    roadKm = {};
     render(false);
     setStatus(message);
   }
@@ -193,7 +193,7 @@
       if (r.loadPct < state.settings.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
       var done = 0;
       r.seq.forEach(function (si) { if (idx.byStop[r.vehicle.id + ':' + p.stops[si].orders[0].id] === 'done') done++; });
-      var km = roadKm[k] ? num(roadKm[k], 1) + ' км по дорогам' : num(r.km, 1) + ' км';
+      var km = num(r.km, 1) + ' км';
       html += '<div class="route' + (sel ? ' sel' : '') + '" style="--c:' + c + '">' +
         '<button type="button" class="route-head" data-k="' + k + '" aria-expanded="' + sel + '">' +
         '<span class="route-title"><span>' + esc(r.vehicle.name) + '</span><span>' + num(r.load) + ' / ' + num(r.vehicle.cap) + ' кг</span></span>' +
@@ -255,9 +255,11 @@
   }
 
   function renderMap(p, fit, idx) {
-    var routes = [];
+    var routes = [], pending = 0;
     p.routes.forEach(function (r, k) {
       if (!r.seq.length) return;
+      if (!r.road) askRoad(p, r);
+      if (!r.road) pending++;
       routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null,
         points: r.stops.map(function (x, i) {
           var s = p.stops[x.stop], title = stopTitle(s), st = idx.byStop[r.vehicle.id + ':' + s.orders[0].id];
@@ -268,24 +270,34 @@
         }) });
     });
     window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes }, fit);
-    var note = 'Расстояния оценены по прямой с поправкой ×' + String(state.settings.detour).replace('.', ',') + '. Выберите маршрут, чтобы увидеть его по дорогам.';
+    var note = p.byRoad ? 'Расстояния и время посчитаны по дорогам (данные OpenStreetMap), время в пути умножено на ' +
+        String(state.settings.trafficFactor).replace('.', ',') + ' как запас на пробки.' :
+      'Таблицы дорог нет: расстояния оценены по прямой с поправкой ×' + String(state.settings.detour).replace('.', ',') + '.';
+    if (pending) note = 'Прокладываю линии по улицам, осталось маршрутов: ' + pending + '. ' + note;
     if (window.MilkMap.mode() === 'svg') note = 'Карта-подложка недоступна, показана схема. ' + note;
     $('map-note').textContent = note;
   }
 
-  // Клик по маршруту: раскрываем список точек и подгружаем настоящую линию по дорогам.
+  // Линия маршрута по улицам: берём готовую из памяти или запрашиваем один раз и перерисовываем карту.
+  function askRoad(p, r) {
+    var pts = r.stops.map(function (x) { return p.stops[x.stop]; });
+    var hit = window.MilkMap.roadCached(DATA.depot, pts);
+    if (hit) { r.road = hit.coords; return; }
+    if (r.roadAsked) return;
+    r.roadAsked = true;
+    window.MilkMap.roadRoute(DATA.depot, pts).then(function (res) {
+      if (!res) return;
+      r.road = res.coords;
+      if (plans[view] !== p) return;
+      clearTimeout(mapTimer);
+      mapTimer = setTimeout(function () { if (plans[view] === p) renderMap(p, false, eventIndex()); }, 80);
+    });
+  }
+
+  // Клик по маршруту: раскрываем список его точек и выделяем его на карте.
   function pick(k) {
     selected = selected === k ? -1 : k;
     render(false);
-    if (selected < 0) return;
-    var p = plans[view], r = p.routes[k];
-    if (!r || r.road) return;
-    var pts = r.stops.map(function (x) { return p.stops[x.stop]; });
-    window.MilkMap.roadRoute(DATA.depot, pts).then(function (res) {
-      if (!res || plans[view] !== p) return;
-      r.road = res.coords; roadKm[k] = res.km;
-      if (selected === k) render(false);
-    });
   }
 
   // Логист переносит остановку в другую машину. Остальное не трогаем, только пересчитываем время.
@@ -294,7 +306,7 @@
     plans.best = window.MilkSolver.fromAssignment(input(), window.MilkSolver.toAssignment(plans.best), { orderId: orderId, vehicleId: vehicleId });
     draft = { assignment: window.MilkSolver.toAssignment(plans.best), at: new Date().toISOString() };
     Store.saveDraft(draft.assignment, summaryOf(plans.best));
-    saveLocal(); roadKm = {};
+    saveLocal();
     render(false);
     var v = vehicleById(vehicleId), d = plans.best.km - before;
     toast('Перенесено в машину ' + v.id + '. Пробег ' + (d >= 0 ? '+' : '−') + num(Math.abs(d), 1) + ' км', plans.best.problems.length ? 'warn' : '');
@@ -340,8 +352,7 @@
     ['importantWindowMin', 'Окно для важных точек, мин', 'К точкам со звёздочкой приезжаем в течение этого времени'],
     ['minLoadPct', 'Минимальная загрузка, %', 'Жёсткое правило: иначе машина остаётся в гараже'],
     ['delayWeight', 'Важность приезда ко времени', '0 — важен только пробег; чем больше, тем раньше разгрузка', 'step'],
-    ['speedKmh', 'Средняя скорость, км/ч', 'Наше допущение для города'],
-    ['detour', 'Поправка «дорога длиннее прямой»', 'Сверено с реальными дорогами на нескольких маршрутах', 'step'],
+    ['trafficFactor', 'Запас на пробки, ×', 'Время в пути по дорогам умножается на это число. Наше допущение', 'step'],
     ['refKmPerRoute', 'Пробег маршрута сейчас, км', 'Со слов логистов, для сравнения'],
     ['fillDownTimes', 'Время в таблице действует на все точки ниже', 'Если выключить, время учитывается только у точек со звёздочкой', 'check']
   ];
@@ -503,7 +514,7 @@
     $('btn-reset').addEventListener('click', resetDemo);
   }
   function setView(v) {
-    view = v; selected = -1; roadKm = {};
+    view = v; selected = -1;
     $('view-best').classList.toggle('on', v === 'best'); $('view-naive').classList.toggle('on', v === 'naive');
     render(true);
   }
@@ -518,7 +529,7 @@
     Store.reset().then(function () { return Store.load(); }).then(function (data) {
       if (!data) return;
       state = { orders: data.orders, vehicles: data.vehicles, settings: Object.assign(clone(DEFAULTS), data.settings || {}) };
-      draft = null; approved = null; events = data.events;
+      draft = null; approved = null; events = data.events; roads = data.roads || roads;
       clearTimeout(remoteTimer); remoteData = false; remoteStructure = false;
       buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
       solveAndShare();
@@ -533,14 +544,15 @@
   Store.load().then(function (data) {
     if (data && data.orders.length) {
       state = { orders: data.orders, vehicles: data.vehicles, settings: Object.assign(clone(DEFAULTS), data.settings || {}) };
-      draft = data.draft; approved = data.approved; events = data.events;
+      draft = data.draft; approved = data.approved; events = data.events; roads = data.roads;
       setConn('Онлайн', 'good');
     } else {
       state = loadLocal();
       setConn('Без сервера: правки видны только здесь', 'warn');
     }
     buildOrders(); buildSettings(); bind();
-    if (draft) showDraft('план загружен из базы'); else solveAndShare();
+    // Черновик из базы показываем как есть; если он посчитан ещё без таблицы дорог — считаем заново.
+    if (draft && (!roads || (draft.summary && draft.summary.byRoad))) showDraft('план загружен из базы'); else solveAndShare();
     Store.subscribe(remote);
     mapReady.then(function () { render(true); });
   });

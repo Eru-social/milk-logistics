@@ -15,6 +15,13 @@
     return { id: r.id, vehicleId: r.vehicle_id, orderId: r.order_id, kind: r.kind, note: r.note || '', at: r.created_at };
   }
   function planFromRow(r) { return r ? { assignment: r.assignment, summary: r.summary || {}, author: r.author, at: r.updated_at } : null; }
+  // Таблица расстояний по дорогам: index говорит, в какой строке лежит точка "широта,долгота".
+  function roadsFromRow(r) {
+    if (!r || !r.keys || !r.km10 || !r.min10) return null;
+    var index = {};
+    r.keys.forEach(function (k, i) { index[k] = i; });
+    return { n: r.keys.length, index: index, km10: r.km10, min10: r.min10 };
+  }
   function now() { return new Date().toISOString(); }
 
   function withTimeout(promise, ms) {
@@ -31,8 +38,9 @@
       sb.from('vehicles').select('*').order('id'),
       sb.from('app_settings').select('*').eq('id', 1).maybeSingle(),
       sb.from('plans').select('*'),
-      sb.from('driver_events').select('*').order('created_at', { ascending: true }).limit(1000)
-    ]), 8000).then(function (res) {
+      sb.from('driver_events').select('*').order('created_at', { ascending: true }).limit(1000),
+      sb.from('road_matrix').select('keys,km10,min10').eq('id', 1).maybeSingle()
+    ]), 12000).then(function (res) {
       var orders = check(res[0]), vehicles = check(res[1]), settings = check(res[2]), plans = check(res[3]), events = check(res[4]);
       online = true;
       var byId = {};
@@ -40,7 +48,7 @@
       return {
         orders: orders.map(orderFromRow), vehicles: vehicles.map(vehicleFromRow),
         settings: settings ? settings.data : {}, draft: planFromRow(byId.draft), approved: planFromRow(byId.approved),
-        events: events.map(eventFromRow)
+        events: events.map(eventFromRow), roads: roadsFromRow(res[5].data)
       };
     }).catch(function (e) { console.warn('База недоступна, работаем локально:', e && e.message); online = false; return null; });
   }

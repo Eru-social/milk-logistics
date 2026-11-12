@@ -31,21 +31,29 @@
     return 2 * R * Math.asin(Math.sqrt(s));
   }
 
-  // Таблица «от каждой точки до каждой»: километры и минуты.
-  // Точка 0 — склад, дальше остановки. Если передана готовая таблица
-  // по реальным дорогам (roadMatrix), берём её вместо оценки по прямой.
-  function buildMatrix(points, st, roadMatrix) {
-    var n = points.length, km = [], min = [], i, j;
+  // Таблица «от каждой точки до каждой»: километры и минуты. Точка 0 — склад, дальше остановки.
+  // Если есть готовая таблица по реальным дорогам (roads), берём расстояния из неё,
+  // а время в пути умножаем на запас на пробки. Для адресов, которых в таблице нет,
+  // считаем по прямой с поправкой — это запасной вариант.
+  function roadKey(p) { return p.lat.toFixed(5) + ',' + p.lon.toFixed(5); }
+  function buildMatrix(points, st, roads) {
+    var n = points.length, km = [], min = [], i, j, byRoad = !!roads;
+    var idx = points.map(function (p) { return roads ? roads.index[roadKey(p)] : undefined; });
     for (i = 0; i < n; i++) {
       km.push(new Float64Array(n)); min.push(new Float64Array(n));
       for (j = 0; j < n; j++) {
         if (i === j) continue;
-        if (roadMatrix) { km[i][j] = roadMatrix.km[i][j]; min[i][j] = roadMatrix.min[i][j]; continue; }
-        var d = haversineKm(points[i], points[j]) * st.detour;
-        km[i][j] = d; min[i][j] = d / st.speedKmh * 60;
+        if (idx[i] !== undefined && idx[j] !== undefined) {
+          km[i][j] = roads.km10[idx[i] * roads.n + idx[j]] / 100;
+          min[i][j] = roads.min10[idx[i] * roads.n + idx[j]] / 10 * st.trafficFactor;
+        } else {
+          byRoad = false;
+          var d = haversineKm(points[i], points[j]) * st.detour;
+          km[i][j] = d; min[i][j] = d / st.speedKmh * 60;
+        }
       }
     }
-    return { km: km, min: min };
+    return { km: km, min: min, byRoad: byRoad };
   }
 
   // ---------- шаг 1: заказы -> остановки ----------
@@ -339,7 +347,7 @@
     var stops = buildStops(input.orders, st);
     var vehicles = input.vehicles.filter(function (v) { return v.active !== false && v.cap > 0; });
     var points = [input.depot].concat(stops);
-    return { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roadMatrix) };
+    return { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roads) };
   }
 
   // ГЛАВНАЯ ФУНКЦИЯ: строит оптимизированный план.
@@ -373,7 +381,7 @@
     var totalKg = 0, totalCap = 0;
     P.stops.forEach(function (s) { totalKg += s.kg; });
     P.vehicles.forEach(function (v) { totalCap += v.cap; });
-    out.stops = P.stops; out.totalKg = totalKg; out.totalCap = totalCap;
+    out.stops = P.stops; out.totalKg = totalKg; out.totalCap = totalCap; out.byRoad = P.M.byRoad;
     if (totalKg > totalCap) out.problems.unshift('Груз не помещается в машины: лишних ' + Math.round(totalKg - totalCap) + ' кг');
     return out;
   }

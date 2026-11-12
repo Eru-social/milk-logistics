@@ -30,7 +30,11 @@
     map.on('load', function () {
       map.addSource('routes', { type: 'geojson', data: empty() });
       map.addSource('stops', { type: 'geojson', data: empty() });
-      map.addLayer({ id: 'routes-line', type: 'line', source: 'routes',
+      // Пока линия по улицам не загружена, маршрут показан тонким пунктиром.
+      map.addLayer({ id: 'routes-pending', type: 'line', source: 'routes', filter: ['==', ['get', 'pending'], true],
+        paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-dasharray': [1, 3],
+          'line-opacity': ['case', ['get', 'dim'], 0.15, 0.5] } });
+      map.addLayer({ id: 'routes-line', type: 'line', source: 'routes', filter: ['==', ['get', 'pending'], false],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'sel'], 5, 2.5],
           'line-opacity': ['case', ['get', 'dim'], 0.3, 0.85] } });
@@ -80,8 +84,8 @@
           properties: { k: r.k, color: p.color || r.color, sel: sel, dim: dim, n: String(p.n), html: p.html } });
       });
       coords.push([model.depot.lon, model.depot.lat]);
-      lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: sel && r.road ? r.road : coords },
-        properties: { k: r.k, color: r.color, sel: sel, dim: dim } });
+      lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.road || coords },
+        properties: { k: r.k, color: r.color, sel: sel, dim: dim, pending: !r.road } });
     });
     // Выбранный маршрут рисуем последним, чтобы он лежал поверх остальных.
     lines.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
@@ -107,10 +111,10 @@
     model.routes.forEach(function (r) {
       var sel = r.k === model.selected, dim = hasSel && !sel, s = '';
       var d = 'M' + X(model.depot) + ' ' + Y(model.depot);
-      r.points.forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); });
-      d += ' Z';
-      s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : 2) +
-        '" stroke-linejoin="round" opacity="' + (dim ? 0.3 : 0.85) + '" style="cursor:pointer"/>';
+      if (r.road) r.road.forEach(function (c) { d += ' L' + X({ lon: c[0], lat: c[1] }) + ' ' + Y({ lon: c[0], lat: c[1] }); });
+      else { r.points.forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); }); d += ' Z'; }
+      s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : (r.road ? 2 : 1.2)) +
+        '"' + (r.road ? '' : ' stroke-dasharray="2 6"') + ' stroke-linejoin="round" opacity="' + (dim ? 0.3 : 0.85) + '" style="cursor:pointer"/>';
       r.points.forEach(function (p) {
         s += '<g data-k="' + r.k + '" opacity="' + (dim ? 0.45 : 1) + '" style="cursor:pointer"><circle cx="' + X(p) + '" cy="' + Y(p) + '" r="' + (sel ? 9 : 5) +
           '" fill="' + (p.color || r.color) + '" stroke="#fff" stroke-width="1.5"><title>' + p.title + '</title></circle>' +
@@ -125,17 +129,54 @@
     });
   }
 
-  // Настоящая линия по дорогам для одного маршрута. Возвращает { coords, km, min } или null, если сервис недоступен.
-  function roadRoute(depot, points) {
-    var path = [depot].concat(points, [depot]).map(function (p) { return p.lon.toFixed(5) + ',' + p.lat.toFixed(5); }).join(';');
-    if (roadCache[path]) return Promise.resolve(roadCache[path]);
-    return fetch(ROAD_URL + path + '?overview=full&geometries=geojson').then(function (r) { return r.json(); }).then(function (j) {
-      if (!j.routes || !j.routes.length) return null;
-      var out = { coords: j.routes[0].geometry.coordinates, km: j.routes[0].distance / 1000, min: j.routes[0].duration / 60 };
-      roadCache[path] = out;
-      return out;
+  // ЛИНИЯ ПО УЛИЦАМ для одного маршрута. Возвращает { coords, km, min } или null, если сервис недоступен.
+  // Запросы идут по одному с паузой (у бесплатного сервера ограничение), готовые линии запоминаются
+  // в памяти и в браузере, поэтому повторный показ того же маршрута мгновенный.
+  var CACHE_KEY = 'milk.roadlines.v1', CACHE_MAX = 60, queue = Promise.resolve(), stored = null;
+  function readStored() {
+    if (stored) return stored;
+    try { stored = JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch (e) { stored = {}; }
+    return stored;
+  }
+  function writeStored(path, value) {
+    var all = readStored(), keys;
+    all[path] = value;
+    keys = Object.keys(all);
+    while (keys.length > CACHE_MAX) delete all[keys.shift()];      // самые старые линии выбрасываем
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify(all)); } catch (e) { /* хранилище переполнено — не страшно */ }
+  }
+  function wait(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+  function fetchRoad(path, attempt) {
+    return fetch(ROAD_URL + path + '?overview=full&geometries=geojson').then(function (r) {
+      if (r.status === 429 && attempt < 2) return wait(2500).then(function () { return fetchRoad(path, attempt + 1); });
+      return r.json();
+    }).then(function (j) {
+      if (!j || !j.routes || !j.routes.length) return null;
+      return { coords: j.routes[0].geometry.coordinates.map(function (c) { return [+c[0].toFixed(5), +c[1].toFixed(5)]; }),
+        km: j.routes[0].distance / 1000, min: j.routes[0].duration / 60 };
     }).catch(function () { return null; });
   }
+  function roadPath(depot, points) {
+    return [depot].concat(points, [depot]).map(function (p) { return p.lon.toFixed(5) + ',' + p.lat.toFixed(5); }).join(';');
+  }
+  // Уже известная линия (без запроса) или null.
+  function roadCached(depot, points) {
+    var path = roadPath(depot, points);
+    return roadCache[path] || readStored()[path] || null;
+  }
+  function roadRoute(depot, points) {
+    var path = roadPath(depot, points), hit = roadCached(depot, points);
+    if (hit) { roadCache[path] = hit; return Promise.resolve(hit); }
+    var result = queue.then(function () {
+      if (roadCache[path]) return roadCache[path];
+      return fetchRoad(path, 0).then(function (out) {
+        if (out) { roadCache[path] = out; writeStored(path, out); }
+        return wait(350).then(function () { return out; });
+      });
+    });
+    queue = result.catch(function () { return null; });
+    return result;
+  }
 
-  window.MilkMap = { init: init, draw: draw, roadRoute: roadRoute, mode: function () { return mode; } };
+  window.MilkMap = { init: init, draw: draw, roadRoute: roadRoute, roadCached: roadCached, mode: function () { return mode; } };
 })();
