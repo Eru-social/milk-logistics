@@ -1,12 +1,12 @@
 // Проверка перестроения кодом. Запуск: node tests/check-replan.js
 const dir = process.argv[2] || require('path').join(__dirname, '..');
 global.window = {};
-require(dir + '/js/settings.js'); require(dir + '/js/data.js');
+require(dir + '/js/settings.js'); require(dir + '/js/data.js'); require(dir + '/js/roads.js');
 const S = require(dir + '/js/solver.js'), R = require(dir + '/js/replan.js');
 const D = window.MILK_DATA, st = Object.assign({}, window.MILK_SETTINGS);
 const clone = x => JSON.parse(JSON.stringify(x));
 const clock = m => { m = Math.round(m); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
-const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: st, roads: null };
+const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: st, roads: S.roadsFrom(window.MILK_ROADS) };  // считаем по дорогам, как сайт
 let fails = 0;
 function ok(cond, text) { if (!cond) { fails++; console.log('  ОШИБКА: ' + text); } }
 
@@ -123,7 +123,7 @@ const odd = [
 odd.forEach(([name, inc]) => { try { const r = R.propose(input, base, inc, null); console.log('  ' + name + ': ' + (r.ok ? 'посчитано (' + r.variants[0].title + ')' : r.message)); r.variants.forEach(x => check(x.plan, name)); } catch (e) { fails++; console.log('  ' + name + ': УПАЛО ' + e.stack); } });
 // после поломки логист снимает машину с линии и меняет заказ: экран не должен падать
 try {
-  const inp2 = clone(input); inp2.roads = null; inp2.vehicles[2].active = false; inp2.orders[10].kg = 0; inp2.orders[50].kg = 5000;
+  const inp2 = clone(Object.assign({}, input, { roads: null })); inp2.roads = input.roads; inp2.vehicles[2].active = false; inp2.orders[10].kg = 0; inp2.orders[50].kg = 5000;
   inp2.vehicles.push({ id: 17, name: 'Машина 17 · 4 т', cap: 4000, active: true });
   const p = S.fromAssignment(inp2, clone(A.assignment), null, clone(A.live));
   console.log('  правки данных после поломки: план показан, машин ' + p.routes.length + ', проблем ' + p.problems.length);

@@ -40,6 +40,17 @@
   // а время в пути умножаем на запас на пробки. Для адресов, которых в таблице нет,
   // считаем по прямой с поправкой — это запасной вариант.
   function roadKey(p) { return p.lat.toFixed(5) + ',' + p.lon.toFixed(5); }
+  // Таблица дорог приходит из базы или из файла js/roads.js в «сыром» виде: { keys, km10, min10 }.
+  // Здесь к ней добавляется указатель «точка → номер строки», чтобы искать быстро.
+  // Битая или неполная таблица (например, жюри что-то сломало в базе) — считаем, что её нет.
+  function roadsFrom(raw) {
+    if (!raw || !raw.keys || !raw.km10 || !raw.min10) return null;
+    var n = raw.keys.length;
+    if (!n || raw.km10.length !== n * n || raw.min10.length !== n * n) return null;
+    var index = {};
+    raw.keys.forEach(function (k, i) { index[k] = i; });
+    return { n: n, index: index, km10: raw.km10, min10: raw.min10 };
+  }
   function buildMatrix(points, st, roads) {
     var n = points.length, km = [], min = [], i, j, byRoad = !!roads;
     var idx = points.map(function (p) { return roads ? roads.index[roadKey(p)] : undefined; });
@@ -68,21 +79,41 @@
     return false;
   }
 
+  // Два правила логистов:
+  //   — несколько получателей (разных организаций) по одному адресу — одна остановка;
+  //   — повтор в списке (та же организация по тому же адресу ещё раз) — отдельная доставка,
+  //     то есть отдельная остановка. В файле заказчика список из двух частей, шесть магазинов есть в обеих.
+  // Поэтому по каждому адресу держим список остановок: заказ идёт в первую остановку этого адреса,
+  // где его организации ещё нет; если она есть во всех — открываем новую остановку.
+  //
+  // Время выгрузки: в файле заказчика оно вписано только у 10 важных строк («для наиболее важных
+  // объектов определено время выгрузки»). Остальным можно привозить в любое время смены (from = 0).
+  // Настройка fillDownTimes — запасное толкование: время из строки выше действует на пустые ячейки ниже.
+  // В этом толковании, как и раньше, заказы с разным временем на одном адресе — разные остановки.
+  function normText(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
   function buildStops(orders, st) {
     var byKey = {}, stops = [];
     orders.forEach(function (o) {
       if (!(o.kg > 0)) return;
-      var hasTime = o.timeExplicit || st.fillDownTimes;
-      var from = hasTime ? o.from : 0;
-      var key = o.address.toLowerCase() + '|' + from;
-      var s = byKey[key];
-      if (!s) {
-        s = byKey[key] = { orders: [], kg: 0, from: from, due: st.dayEnd, important: false,
-          lat: o.lat, lon: o.lon, address: o.address, center: isCenter(o.address, st) };
-        stops.push(s);
+      var from = o.timeExplicit || st.fillDownTimes ? (+o.from || 0) : 0;
+      var key = normText(o.address) + (st.fillDownTimes ? '|' + from : '');
+      var name = normText(o.name), list = byKey[key] || (byKey[key] = []), s = null;
+      var due = o.timeExplicit ? from + st.importantWindowMin : st.dayEnd;
+      // Если по одному адресу вписаны два времени, которые не совместить (например, 6:00 и 12:00),
+      // это две разные поездки: такой заказ тоже уходит в отдельную остановку.
+      for (var i = 0; i < list.length && !s; i++) {
+        if (!list[i].names[name] && Math.max(list[i].from, from) <= Math.min(list[i].due, due)) s = list[i];
       }
-      s.orders.push(o); s.kg += o.kg;
-      if (o.timeExplicit) { s.important = true; s.due = Math.min(s.due, o.from + st.importantWindowMin); }
+      if (!s) {
+        // repeat: 0 — первая доставка по адресу, 1 и больше — повторная (вторая строка той же организации).
+        s = { orders: [], names: {}, kg: 0, from: 0, due: st.dayEnd, important: false, repeat: list.length,
+          lat: o.lat, lon: o.lon, address: o.address, center: isCenter(o.address, st) };
+        list.push(s); stops.push(s);
+      }
+      s.names[name] = true; s.orders.push(o); s.kg += o.kg;
+      s.from = Math.max(s.from, from);                     // разгружаем, когда можно всем получателям
+      if (o.timeExplicit) s.important = true;
+      s.due = Math.min(s.due, due);
     });
     // Мелкой точке хватает короткой разгрузки.
     stops.forEach(function (s) { s.service = s.kg <= st.smallStopKg ? st.smallServiceMin : st.serviceMin; });
@@ -481,16 +512,27 @@
   }
 
   // ГЛАВНАЯ ФУНКЦИЯ: строит оптимизированный план.
-  function solve(input) {
+  // opts — необязательные настройки расчёта:
+  //   timeMs — запас времени на расчёт. По умолчанию 2,5 секунды: на экране логист ждёт ответа.
+  //            Эталонный план (tools/make-base-plan.js) считается с запасом около минуты:
+  //            вечером план на завтра считать не спешат.
+  //   rounds — сколько раз «встряхивать» план (по умолчанию improveRounds из настроек);
+  //   seed   — начальное число для случайного выбора. С одним и тем же seed и тем же запасом
+  //            времени на одном компьютере план всегда одинаковый.
+  // Важно: если запаса времени не хватило, на медленном компьютере план выйдет хуже, чем на быстром.
+  // Поэтому числа для показа берутся из эталонного плана, а не из расчёта на месте.
+  function solve(input, opts) {
+    opts = opts || {};
     var started = Date.now(), P = prepare(input);
     PENALTY_OVERLOAD = OVERLOAD_SOFT;
     var routes = initialPlan(P);
-    var hardStop = started + 2500;                       // страховка: дольше 2,5 секунды не считаем
+    var hardStop = started + (opts.timeMs > 0 ? opts.timeMs : 2500);   // страховка: дольше запаса не считаем
+    var rounds = opts.rounds > 0 ? opts.rounds : P.st.improveRounds;
     var near = buildNeighbours(P, 14);
     var best = routes, bestCost = P.vehicles.length ? new LocalSearch(P, best, near).run(hardStop) : 0;
-    var rnd = makeRandom(12345);
+    var rnd = makeRandom(opts.seed || 12345);
     var round;
-    for (round = 0; round < P.st.improveRounds && Date.now() < hardStop && P.vehicles.length; round++) {
+    for (round = 0; round < rounds && Date.now() < hardStop && P.vehicles.length; round++) {
       var trial = shake(P, best, rnd, round);
       var cost = new LocalSearch(P, trial, near).run(hardStop);
       if (cost < bestCost - 1e-6) { best = trial; bestCost = cost; }
@@ -599,6 +641,7 @@
   }
 
   var api = { solve: solve, naive: naive, fromAssignment: fromAssignment, toAssignment: toAssignment, haversineKm: haversineKm,
+    roadsFrom: roadsFrom,
     // Внутренние части для перестроения в течение дня (js/replan.js).
     core: { prepare: prepare, liveTail: liveTail, cutOf: cutOf, describe: describe, finish: finish } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

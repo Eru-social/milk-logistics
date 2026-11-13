@@ -236,7 +236,21 @@
     if (row) { list.push(row); list.sort(function (a, b) { return a.id - b.id; }); }
   }
 
-  Store.load().then(function (d) {
+  // Таблица дорог обычно приходит из базы. Файл js/roads.js большой, а мобильный интернет медленный,
+  // поэтому телефон грузит его, только если база ответила, но таблицы дорог в ответе нет.
+  // Без базы маршрута у водителя всё равно нет (утверждённый план лежит в базе), и файл не нужен.
+  function ensureRoads(d) {
+    if (!d || d.roads || typeof document === 'undefined' || !document.createElement) return Promise.resolve(d);
+    return new Promise(function (done) {
+      var tag = document.createElement('script');
+      tag.src = 'js/roads.js?v=11';
+      tag.onload = function () { d.roads = window.MilkSolver.roadsFrom(window.MILK_ROADS); done(d); };
+      tag.onerror = function () { done(d); };          // не загрузился — считаем по прямой, как раньше
+      document.head.appendChild(tag);
+    });
+  }
+
+  Store.load().then(ensureRoads).then(function (d) {
     data = d;
     compute(); render();
     if (!d) return;

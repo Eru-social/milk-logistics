@@ -31,7 +31,7 @@ function makeWorld(storage) {
 (async () => {
   const storage = {};
   const A = makeWorld(storage);
-  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/solver.js', 'js/replan.js', 'js/map.js', 'js/app.js'].forEach(A.load);
+  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/replan.js', 'js/map.js', 'js/app.js'].forEach(A.load);
   await A.flush();
   const text = id => A.el(id).innerHTML || A.el(id).textContent;
   console.log('диспетчер открыт без сервера:', A.el('conn').textContent, '|', A.el('status').textContent);

@@ -1,10 +1,10 @@
 // Страница водителя без браузера: что видит водитель сломанной машины и водитель машины-помощника.
 const dir = process.argv[2] || require('path').join(__dirname, '..'), fs = require('fs'), vm = require('vm');
 global.window = {};
-require(dir + '/js/settings.js'); require(dir + '/js/data.js');
+require(dir + '/js/settings.js'); require(dir + '/js/data.js'); require(dir + '/js/roads.js');
 const S = require(dir + '/js/solver.js'), R = require(dir + '/js/replan.js');
 const D = window.MILK_DATA, clone = x => JSON.parse(JSON.stringify(x));
-const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: Object.assign({}, window.MILK_SETTINGS), roads: null };
+const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: Object.assign({}, window.MILK_SETTINGS), roads: S.roadsFrom(window.MILK_ROADS) };  // считаем по дорогам, как сайт
 const base = S.fromAssignment(input, S.toAssignment(S.solve(input)));
 const res = R.propose(input, base, { type: 'breakdown', vehicleId: 7, at: 640 }, null), v = res.variants[0];
 const helper = v.plan.routes.find(r => r.stops.some(x => x.pickup)).vehicle.id;
@@ -16,7 +16,7 @@ function page(vehicleId, events) {
   const win = { document: { getElementById: el }, localStorage: { getItem: () => String(vehicleId), setItem() {}, removeItem() {} }, console, setTimeout, clearTimeout,
     navigator: {}, location: { reload() {} }, scrollTo() {}, Promise, Date, Math, JSON,
     MILK_DATA: D, MILK_SETTINGS: window.MILK_SETTINGS, MilkSolver: S,
-    MilkStore: { load: () => Promise.resolve({ orders: clone(input.orders), vehicles: clone(input.vehicles), settings: {}, approved: approved, draft: null, events: events || [], roads: null }),
+    MilkStore: { load: () => Promise.resolve({ orders: clone(input.orders), vehicles: clone(input.vehicles), settings: {}, approved: approved, draft: null, events: events || [], roads: input.roads }),
       subscribe() {}, addEvent: () => Promise.resolve(null) } };
   win.window = win;
   vm.runInContext(fs.readFileSync(dir + '/js/driver.js', 'utf8'), vm.createContext(win), { filename: 'driver.js' });

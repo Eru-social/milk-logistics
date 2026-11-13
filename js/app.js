@@ -12,7 +12,10 @@
   var plans = { best: null, naive: null };   // показанный план и «план по списку» для сравнения
   var draft = null, approved = null;         // общий черновик и утверждённый план: { assignment, at }
   var events = [];                           // события от водителей
-  var roads = null;                          // таблица расстояний по дорогам из базы
+  var roads = null;                          // таблица расстояний по дорогам: из базы, а без базы — из js/roads.js
+  // Эталонный план (js/base-plan.js): посчитан заранее на исходных данных с большим запасом времени
+  // (tools/make-base-plan.js). Тот же план лежит в базе и возвращается кнопкой «Сбросить демо».
+  var BASE = window.MILK_BASE_PLAN || null;
   var view = 'best', selected = -1, mapTimer = null;
   var solveTimer = null, remoteTimer = null, fallbackTimer = null, toastTimer = null;
   var remoteData = false, remoteStructure = false;
@@ -38,6 +41,10 @@
   }
 
   // ---------- работа без сервера (запасной режим) ----------
+  function roadsFromFile() { return window.MILK_ROADS ? window.MilkSolver.roadsFrom(window.MILK_ROADS) : null; }
+  function baseDraft() {
+    return BASE ? { assignment: clone(BASE.assignment), summary: clone(BASE.summary), live: null, at: new Date().toISOString() } : null;
+  }
   function fresh() { return { orders: clone(DATA.orders), vehicles: clone(DATA.vehicles), settings: clone(DEFAULTS) }; }
   function loadLocal() {
     try {
@@ -69,15 +76,27 @@
     saveLocal();
   }
 
+  // Расчёт на экране ограничен 2,5 секунды и может выйти хуже эталона, который считали минуту.
+  // Поэтому сравниваем с эталоном на тех же данных и берём лучший: меньше нарушений, при равенстве — меньше км.
+  // Если состав данных изменился (появились остановки, которых нет в эталоне), эталон не подходит.
+  function notWorseThanBase(p) {
+    if (!BASE) return p;
+    var b = window.MilkSolver.fromAssignment(input(), BASE.assignment);
+    if (b.leftover) return p;
+    if (b.problems.length < p.problems.length || (b.problems.length === p.problems.length && b.km < p.km - 0.05)) {
+      b.ms = p.ms; b.fromBase = true; return b;
+    }
+    return p;
+  }
   // Считаем новый план здесь и делимся им со всеми экранами.
   function solveAndShare() {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
-    plans.best = window.MilkSolver.solve(input());
+    plans.best = notWorseThanBase(window.MilkSolver.solve(input()));
     plans.naive = window.MilkSolver.naive(input());
     shareDraft();
     selected = -1;
     render(true);
-    setStatus('расчёт за ' + num(plans.best.ms / 1000, 1) + ' с');
+    setStatus('расчёт за ' + num(plans.best.ms / 1000, 1) + ' с' + (plans.best.fromBase ? ': эталонный план лучше, оставлен он' : ''));
   }
   // День уже идёт: с нуля считать нельзя (машины в рейсе), поэтому только обновляем время и нарушения.
   function refreshLive() {
@@ -147,14 +166,21 @@
   }
   function renderKpis(p) {
     var st = state.settings, active = state.vehicles.filter(function (v) { return v.active !== false; }).length;
-    var refKm = st.refKmPerRoute * plans.naive.used, diff = refKm ? (p.km - refKm) / refKm * 100 : 0;
+    // Две независимые оценки «как сейчас» (нынешних маршрутов заказчика у нас нет):
+    //   1) со слов логистов: в среднем 45 км на маршрут × число маршрутов;
+    //   2) «план по списку»: список заказчика, нарезанный по порядку и по вместимости машин (MilkSolver.naive).
+    var refKm = st.refKmPerRoute * plans.naive.used, listKm = plans.naive.km;
+    function vs(ref) {
+      var d = ref ? (p.km - ref) / ref * 100 : 0;
+      return '<span class="pill ' + (d <= 0 ? 'good' : 'bad') + '">' + (d <= 0 ? '−' : '+') + num(Math.abs(d)) + '%</span>';
+    }
     var longest = 0, loadSum = 0;
     p.routes.forEach(function (r) { if (r.seq.length) { longest = Math.max(longest, st.loadMin + r.back - r.depart); loadSum += r.loadPct; } });
     var bad = p.problems.length > 0, html = '', tol = st.overtimeToleranceMin || 0;
     var shiftOk = longest <= st.shiftMin + Math.max(0.5, tol), shiftExact = longest <= st.shiftMin + 0.5;
-    html += tile('Пробег за день', num(p.km), 'км',
-      '<span class="pill ' + (diff <= 0 ? 'good' : 'bad') + '">' + (diff <= 0 ? '−' : '+') + num(Math.abs(diff)) + '%</span>',
-      'Сейчас около ' + num(refKm) + ' км: ' + st.refKmPerRoute + ' км × ' + plans.naive.used + ' маршрутов, со слов логистов');
+    html += tile('Пробег за день', num(p.km), 'км', '',
+      'Как сейчас, две оценки:<br>' + vs(refKm) + ' от ' + num(refKm) + ' км — ' + st.refKmPerRoute + ' км × ' + plans.naive.used +
+      ' маршрутов, со слов логистов<br>' + vs(listKm) + ' от ' + num(listKm) + ' км — «по списку»: список заказчика по порядку, нарезан по вместимости машин');
     html += tile('Машин на линии', p.used, 'из ' + active,
       p.used < active ? '<span class="pill good">' + (active - p.used) + ' в гараже</span>' : '',
       p.live ? 'День идёт: снимок на ' + clock(p.live.now) + ', уже сделанное не меняется' :
@@ -586,7 +612,7 @@
     ['transferMin', 'Перегрузка из сломанной машины, мин', 'Для перестроения в течение дня. Наше допущение'],
     ['retryMin', 'Вернуться к закрытой точке через, мин', 'Для перестроения в течение дня. Наше допущение'],
     ['replanOvertimeMin', 'Умеренная переработка — до, мин', 'Для среднего варианта перестроения. Наше допущение'],
-    ['fillDownTimes', 'Время в таблице действует на все точки ниже', 'Если выключить, время учитывается только у точек со звёздочкой', 'check']
+    ['fillDownTimes', 'Запасное толкование: время из строки выше действует на точки ниже', 'Обычно выключено: по файлу заказчика время есть только у 10 важных точек (со звёздочкой), остальным можно в любое время смены', 'check']
   ];
   function buildSettings() {
     var html = '';
@@ -791,19 +817,21 @@
 
   function resetDemo() {
     setStatus('Сбрасываю…');
+    // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.
     if (!Store.isOnline()) {
-      state = fresh(); draft = null; approved = null; events = [];
-      buildOrders(); buildSettings(); $('order-search').value = ''; solveAndShare();
+      state = fresh(); draft = baseDraft(); approved = null; events = [];
+      buildOrders(); buildSettings(); $('order-search').value = '';
+      if (draft) { showDraft('демо сброшено: эталонный план'); saveLocal(); } else solveAndShare();
       return;
     }
     Store.reset().then(function () { return Store.load(); }).then(function (data) {
       if (!data) return;
       state = { orders: data.orders, vehicles: data.vehicles, settings: Object.assign(clone(DEFAULTS), data.settings || {}) };
-      draft = null; approved = null; events = data.events; roads = data.roads || roads;
-      clearTimeout(remoteTimer); remoteData = false; remoteStructure = false;
+      draft = data.draft; approved = null; events = data.events; roads = data.roads || roads;
+      clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false; remoteStructure = false;
       buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
-      solveAndShare();
-      toast('Демо сброшено: исходные заказы и машины, план не утверждён');
+      if (draft) showDraft('демо сброшено: эталонный план'); else solveAndShare();   // эталона в базе нет — считаем
+      toast('Демо сброшено: исходные заказы и машины, эталонный план, не утверждён');
     });
   }
 
@@ -814,15 +842,17 @@
   Store.load().then(function (data) {
     if (data && data.orders.length) {
       state = { orders: data.orders, vehicles: data.vehicles, settings: Object.assign(clone(DEFAULTS), data.settings || {}) };
-      draft = data.draft; approved = data.approved; events = data.events; roads = data.roads;
+      draft = data.draft; approved = data.approved; events = data.events; roads = data.roads || roadsFromFile();
       setConn('Онлайн', 'good');
     } else {
-      state = loadLocal();
+      state = loadLocal(); roads = roadsFromFile();
+      if (!draft) draft = baseDraft();          // первый запуск без базы: показываем эталонный план
       setConn('Без сервера: правки видны только здесь', 'warn');
     }
     buildOrders(); buildSettings(); bind();
-    // Черновик из базы показываем как есть; если он посчитан ещё без таблицы дорог — считаем заново.
-    if (draft && (!roads || (draft.summary && draft.summary.byRoad))) showDraft('план загружен из базы'); else solveAndShare();
+    // Черновик показываем как есть; если он был посчитан по прямой, а таблица дорог есть — считаем заново.
+    var stale = draft && draft.summary && draft.summary.byRoad === false && roads;
+    if (draft && !stale) showDraft(draft.summary && draft.summary.base ? 'эталонный план' : (Store.isOnline() ? 'план загружен из базы' : 'показан сохранённый план')); else solveAndShare();
     Store.subscribe(remote);
     mapReady.then(function () { render(true); });
   });

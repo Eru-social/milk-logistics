@@ -1,11 +1,11 @@
 // Обычный день (заказов меньше, часть машин в гараже) и отметки водителей.
 const dir = process.argv[2] || require('path').join(__dirname, '..');
 global.window = {};
-require(dir + '/js/settings.js'); require(dir + '/js/data.js');
+require(dir + '/js/settings.js'); require(dir + '/js/data.js'); require(dir + '/js/roads.js');
 const S = require(dir + '/js/solver.js'), R = require(dir + '/js/replan.js');
 const D = window.MILK_DATA, st = Object.assign({}, window.MILK_SETTINGS);
 const clone = x => JSON.parse(JSON.stringify(x));
-const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: st, roads: null };
+const input = { depot: D.depot, orders: clone(D.orders), vehicles: clone(D.vehicles), settings: st, roads: S.roadsFrom(window.MILK_ROADS) };  // считаем по дорогам, как сайт
 input.orders.forEach((o, i) => { if (i % 3 === 0) o.kg = 0; });
 const plan = S.solve(input);
 console.log('Обычный день: ' + Math.round(plan.km) + ' км, машин ' + plan.used + ' из 16, проблем ' + plan.problems.length);
