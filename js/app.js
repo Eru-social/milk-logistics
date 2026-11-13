@@ -676,7 +676,7 @@
         if (!plan) return;
         clearTimeout(fallbackTimer); clearTimeout(remoteTimer); remoteData = false;
         if (remoteStructure) { buildOrders(); remoteStructure = false; }
-        showDraft('план обновлён на другом экране');
+        showDraft(plan.author === 'base' ? 'демо сброшено: эталонный план' : 'план обновлён на другом экране');   // 'base' — черновик из reset_demo()
       } else if (kind === 'approved') {
         approved = plan; render(false);
         if (plan) toast('План утверждён на другом экране в ' + clockOf(plan.at));
