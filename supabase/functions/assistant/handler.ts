@@ -2,19 +2,21 @@
 // Экран диспетчера присылает фразу логиста → функция спрашивает языковую модель → проверяет её ответ → отдаёт
 // список действий и вопросы. Ключ модели лежит здесь, в секретах Supabase, и никогда не попадает на сайт (решение 8).
 //
-// Поставщик модели заменяемый: подходит любой с «OpenAI-совместимым» адресом (Google Gemini, Groq, OpenRouter,
+// Поставщик модели заменяемый: подходит любой с «OpenAI-совместимым» адресом (Groq, OpenRouter, Cloudflare,
 // Mistral, OpenAI…). Меняется тремя секретами, код трогать не нужно:
 //   MODEL_API_KEY — ключ (обязательно);
-//   MODEL_API_URL — адрес, по умолчанию Google Gemini (есть бесплатный лимит);
-//   MODEL_NAME    — название модели.
+//   MODEL_API_URL — адрес, по умолчанию Groq (бесплатно, без банковской карты, 1000 запросов в сутки, отвечает за 1–2 секунды);
+//   MODEL_NAME    — название модели, по умолчанию openai/gpt-oss-120b (хорошо понимает русский и умеет отвечать строгим JSON).
+// Запасной вариант без карты — OpenRouter: MODEL_API_URL = https://openrouter.ai/api/v1/chat/completions,
+// MODEL_NAME — любая модель с «:free» в названии (50 запросов в сутки).
 //
 // Защита лимита: фраза не длиннее 500 знаков; не больше 8 запросов в минуту с одного адреса и 300 в сутки всего;
 // одинаковые фразы отвечаются из памяти без запроса к модели. Память живёт, пока жив экземпляр функции
 // (Supabase перезапускает их сам), для показа на хакатоне этого достаточно.
 import { messages, normalize, MAX_TEXT } from './understand.mjs';
 
-const DEFAULT_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 const MODEL_TIMEOUT_MS = 7000;           // экран ждёт 8 секунд; модели даём 7, чтобы успеть ответить «не успела»
 const PER_MINUTE = 8, PER_DAY = 300, CACHE_SIZE = 300;
 
@@ -71,15 +73,14 @@ export function makeHandler(deps: Deps) {
     const timer = setTimeout(() => ctrl.abort(), MODEL_TIMEOUT_MS);
     let content = '';
     try {
+      const model = deps.env('MODEL_NAME') || DEFAULT_MODEL;
+      const ask: Record<string, unknown> = { model, messages: messages(mode, vehicles, text), temperature: 0, response_format: { type: 'json_object' } };
+      // gpt-oss «рассуждает» перед ответом; для перевода фразы в список хватает короткого рассуждения: быстрее и меньше расход лимита.
+      if (model.indexOf('gpt-oss') >= 0) ask.reasoning_effort = 'low';
       const res = await deps.fetch(deps.env('MODEL_API_URL') || DEFAULT_URL, {
         method: 'POST', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
-        body: JSON.stringify({
-          model: deps.env('MODEL_NAME') || DEFAULT_MODEL,
-          messages: messages(mode, vehicles, text),
-          temperature: 0,
-          response_format: { type: 'json_object' }
-        })
+        body: JSON.stringify(ask)
       });
       if (!res.ok) {
         const limitHit = res.status === 429;
