@@ -15,8 +15,8 @@
 // (Supabase перезапускает их сам), для показа на хакатоне этого достаточно.
 import { messages, normalize, MAX_TEXT } from './understand.mjs';
 
-const DEFAULT_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const DEFAULT_MODEL = 'openai/gpt-oss-120b';
+const DEFAULT_URL = 'https://openrouter.ai/api/v1/chat/completions';   // выбрано автором 14 ноября: OpenRouter, без карты
+const DEFAULT_MODEL = 'baidu/ernie-5.5-flash-preview:free';   // бесплатная, 50 запросов в сутки; Groq — запасной вариант (см. выше)
 const MODEL_TIMEOUT_MS = 7000;           // экран ждёт 8 секунд; модели даём 7, чтобы успеть ответить «не успела»
 const PER_MINUTE = 8, PER_DAY = 300, CACHE_SIZE = 300;
 
