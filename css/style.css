@@ -122,6 +122,8 @@ button, input { font: inherit; color: inherit; }
 .settings label span { font-weight: 500; }
 .settings label em { grid-column: 1 / -1; font-style: normal; color: var(--muted); font-size: 12px; }
 .settings label.check { grid-template-columns: 20px minmax(0, 1fr); }
+.settings label.choice { grid-template-columns: minmax(0, 1fr); }
+.settings select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); max-width: 100%; }
 
 /* ---------- карта ---------- */
 .map-wrap { position: relative; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); min-height: 360px; }
@@ -137,6 +139,9 @@ button, input { font: inherit; color: inherit; }
 .problems.ok { background: var(--good-soft); color: var(--good); font-weight: 500; }
 .problems.has { background: var(--bad-soft); color: var(--bad); }
 .problems ul { margin: 4px 0 0; padding-left: 18px; }
+.problems-hint { margin: 6px 0 0; color: var(--ink); }
+/* Строка «почему машин столько» над маршрутами */
+.fleet-note { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: 13px; }
 .route { border: 1px solid var(--line); border-left: 5px solid var(--c, var(--line)); border-radius: 10px; margin-bottom: 8px; background: var(--surface); }
 .route.sel { border-color: var(--c); box-shadow: 0 0 0 1px var(--c); }
 .route-head { width: 100%; text-align: left; border: 0; background: none; cursor: pointer; padding: 9px 12px; display: grid; gap: 3px; }

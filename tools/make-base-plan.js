@@ -21,6 +21,9 @@ const dir = path.join(__dirname, '..');
 global.window = {};
 require(dir + '/js/settings.js'); require(dir + '/js/data.js'); require(dir + '/js/roads.js');
 const S = require(dir + '/js/solver.js');
+// Считаем так же, как экран: сначала машины по весу (js/fleet.js), потом маршруты. На исходных данных
+// по весу нужны все 16 машин, поэтому это ровно прежний расчёт решателя (проверка tests/check-fleet.js, часть 1).
+const F = require(dir + '/js/fleet.js');
 const D = window.MILK_DATA, st = Object.assign({}, window.MILK_SETTINGS);
 const roads = S.roadsFrom(window.MILK_ROADS);
 const input = { depot: D.depot, orders: D.orders, vehicles: D.vehicles, settings: st, roads: roads };
@@ -43,7 +46,7 @@ function better(a, b) {
 
 let best = null, bestSeed = 0, started = Date.now();
 SEEDS.forEach(seed => {
-  const p = S.solve(input, { timeMs: SAFETY_MS, rounds: ROUNDS, seed: seed });
+  const p = F.solve(input, { timeMs: SAFETY_MS, rounds: ROUNDS, seed: seed });
   console.log('seed ' + seed + ': ' + p.km.toFixed(1) + ' км, нарушений ' + p.problems.length +
     ', самая длинная смена ' + longest(p).toFixed(1) + ' мин, ' + (p.ms / 1000).toFixed(1) + ' с' + (p.ms >= SAFETY_MS ? ' (упёрся в страховку!)' : ''));
   if (better(p, best)) { best = p; bestSeed = seed; }

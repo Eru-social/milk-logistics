@@ -31,7 +31,7 @@ function makeWorld(storage) {
 (async () => {
   const storage = {};
   const A = makeWorld(storage);
-  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/replan.js', 'js/map.js', 'js/app.js'].forEach(A.load);
+  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/map.js', 'js/app.js'].forEach(A.load);
   await A.flush();
   const text = id => A.el(id).innerHTML || A.el(id).textContent;
   console.log('диспетчер открыт без сервера:', A.el('conn').textContent, '|', A.el('status').textContent);
@@ -75,5 +75,14 @@ function makeWorld(storage) {
   A.fire('view-naive', 'click'); A.fire('view-best', 'click');
   A.fire('btn-recalc', 'click'); await A.flush(); console.log('пересчёт с нуля:', A.el('toast').textContent.slice(0, 50), '|', A.el('approval').textContent);
   A.fire('btn-reset', 'click'); await A.flush(); console.log('сброс демо:', A.el('approval').textContent, '| баннер пуст:', text('incident') === '');
+  // Строка «почему машин столько» и переключатель «Что важнее» во вкладке «Правила»: туда и обратно.
+  console.log('строка про машины:', (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1]);
+  if (!/Машины выбраны по весу/.test(text('fleet-note'))) throw new Error('нет строки «Машины выбраны по весу»');
+  if (!/id="set-fleetPriority"/.test(text('settings-form'))) throw new Error('во вкладке «Правила» нет переключателя');
+  for (const value of ['overtime', 'чепуха', 'fewer']) {
+    const s = A.el('set-fleetPriority'); s.attrs['data-key'] = 'fleetPriority'; s.value = value;
+    A.fire('settings-form', 'change', s); await A.flush();
+    console.log('переключатель → ' + value + ':', A.el('status').textContent, '|', (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1].slice(0, 60));
+  }
   console.log('\nЭкран диспетчера: ошибок нет');
 })().catch(e => { console.log('УПАЛО: ' + e.stack); process.exit(1); });

@@ -79,19 +79,23 @@
   // Расчёт на экране ограничен 2,5 секунды и может выйти хуже эталона, который считали минуту.
   // Поэтому сравниваем с эталоном на тех же данных и берём лучший: меньше нарушений, при равенстве — меньше км.
   // Если состав данных изменился (появились остановки, которых нет в эталоне), эталон не подходит.
+  // В режиме «меньше машин» эталон не подходит и тогда, когда он выводит больше машин, чем выбрано по весу:
+  // в лёгкий день у эталона (16 машин) может оказаться меньше нарушений, но он нарушает главное правило.
   function notWorseThanBase(p) {
     if (!BASE) return p;
     var b = window.MilkSolver.fromAssignment(input(), BASE.assignment);
     if (b.leftover) return p;
+    if (state.settings.fleetPriority !== 'overtime' && b.used > p.used) return p;
     if (b.problems.length < p.problems.length || (b.problems.length === p.problems.length && b.km < p.km - 0.05)) {
       b.ms = p.ms; b.fromBase = true; return b;
     }
     return p;
   }
   // Считаем новый план здесь и делимся им со всеми экранами.
+  // Сначала по весу выбирается число машин (js/fleet.js), потом решатель строит маршруты для них.
   function solveAndShare() {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
-    plans.best = notWorseThanBase(window.MilkSolver.solve(input()));
+    plans.best = notWorseThanBase(window.MilkFleet.solve(input()));
     plans.naive = window.MilkSolver.naive(input());
     shareDraft();
     selected = -1;
@@ -131,8 +135,8 @@
   function render(fit) {
     var p = plans[view];
     if (!p) return;
-    var idx = eventIndex();
-    renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
+    var idx = eventIndex(), fleet = fleetNote(p);
+    renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
   }
 
   function renderMeta() {
@@ -236,7 +240,7 @@
     $('incident').innerHTML = html + '</div>';
   }
 
-  function renderProblems(p) {
+  function renderProblems(p, fleet) {
     if (!p.problems.length) {
       var within = p.overtimeMin > 0.5 || p.overloadKg > 0.5;
       $('problems').innerHTML = '<div class="problems ok">' + (within ? 'План выполним. Есть мелкие отклонения в пределах допуска, они отмечены на маршрутах' : 'Все правила соблюдены') + '</div>';
@@ -244,7 +248,18 @@
     }
     var items = p.problems.slice(0, 6).map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
     if (p.problems.length > 6) items += '<li>и ещё ' + (p.problems.length - 6) + '</li>';
-    $('problems').innerHTML = '<div class="problems has"><b>Что не сходится</b><ul>' + items + '</ul></div>';
+    // Переработку не прячем: если машины, выбранные по весу, не укладываются в смену, логист видит это здесь
+    // и рядом — где взять второй вариант (кнопку «а если» для него сделает этап 1Б).
+    var hint = fleet && fleet.overtimeHint ? '<p class="problems-hint">Без переработки нужно больше машин — это второй вариант: ' +
+      'вкладка «Правила», «Что важнее, если всё сразу не сходится».</p>' : '';
+    $('problems').innerHTML = '<div class="problems has"><b>Что не сходится</b><ul>' + items + '</ul>' + hint + '</div>';
+  }
+  // Одна строка над маршрутами: почему машин столько (текст собирает js/fleet.js).
+  function fleetNote(p) {
+    return view === 'best' ? window.MilkFleet.explain(p, input()) : null;
+  }
+  function renderFleet(fleet) {
+    $('fleet-note').innerHTML = fleet ? '<p class="fleet-note">' + esc(fleet.text) + '</p>' : '';
   }
 
   function stopTitle(s) { return s.orders.map(function (o) { return o.name; }).join(' + '); }
@@ -594,7 +609,13 @@
   }
 
   // ---------- правила ----------
+  // Варианты для полей-списков: [значение, как написано на экране].
+  var CHOICES = {
+    fleetPriority: [['fewer', 'Меньше машин, загрузка не ниже 90%'], ['overtime', 'Без переработки, машин сколько нужно']]
+  };
   var FIELDS = [
+    ['fleetPriority', 'Что важнее, если всё сразу не сходится',
+      'Пока логисты не ответили, сколько длится разгрузка, нужны оба ответа. «Меньше машин» — так работают логисты: число машин задаёт вес, переработка видна в «Что не сходится». «Без переработки» — как решатель считал раньше', 'select'],
     ['serviceMin', 'Разгрузка в обычной точке, мин', 'В среднем 30 минут, со слов логистов'],
     ['smallServiceMin', 'Разгрузка в мелкой точке, мин', 'Мелким точкам хватает 10 минут, со слов логистов'],
     ['smallStopKg', 'Мелкая точка — до, кг', 'Наше допущение: мелкой считаем точку с грузом до 100 кг'],
@@ -618,7 +639,11 @@
     var html = '';
     FIELDS.forEach(function (f) {
       var key = f[0], v = state.settings[key], id = 'set-' + key;
-      if (f[3] === 'check') html += '<label class="check" for="' + id + '"><input type="checkbox" id="' + id + '" data-key="' + key + '"' + (v ? ' checked' : '') + '><span>' + f[1] + '</span><em>' + f[2] + '</em></label>';
+      if (f[3] === 'select') {
+        html += '<label class="choice" for="' + id + '"><span>' + f[1] + '</span><select id="' + id + '" data-key="' + key + '">' +
+          CHOICES[key].map(function (c) { return '<option value="' + c[0] + '"' + (c[0] === v ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') +
+          '</select><em>' + f[2] + '</em></label>';
+      } else if (f[3] === 'check') html += '<label class="check" for="' + id + '"><input type="checkbox" id="' + id + '" data-key="' + key + '"' + (v ? ' checked' : '') + '><span>' + f[1] + '</span><em>' + f[2] + '</em></label>';
       else if (f[3] === 'time') html += '<label for="' + id + '"><span>' + f[1] + '</span><input type="time" id="' + id + '" data-key="' + key + '" value="' + clock(v) + '"><em>' + f[2] + '</em></label>';
       else html += '<label for="' + id + '"><span>' + f[1] + '</span><input type="number" id="' + id + '" data-key="' + key + '" min="0" step="' + (f[3] === 'step' ? '0.01' : '1') + '" value="' + v + '"><em>' + f[2] + '</em></label>';
     });
@@ -740,7 +765,10 @@
       var key = e.target.getAttribute('data-key');
       if (!key) return;
       if (e.target.type === 'checkbox') state.settings[key] = e.target.checked;
-      else if (e.target.type === 'time') state.settings[key] = parseClock(e.target.value);
+      else if (CHOICES[key]) {                    // список: берём только известное значение, иначе — по умолчанию
+        var ok = CHOICES[key].some(function (c) { return c[0] === e.target.value; });
+        state.settings[key] = ok ? e.target.value : DEFAULTS[key];
+      } else if (e.target.type === 'time') state.settings[key] = parseClock(e.target.value);
       else state.settings[key] = Math.max(0, +e.target.value || 0);
       Store.saveSettings(state.settings); saveLocal(); schedule();
     });

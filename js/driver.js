@@ -243,7 +243,7 @@
     if (!d || d.roads || typeof document === 'undefined' || !document.createElement) return Promise.resolve(d);
     return new Promise(function (done) {
       var tag = document.createElement('script');
-      tag.src = 'js/roads.js?v=12';
+      tag.src = 'js/roads.js?v=13';
       tag.onload = function () { d.roads = window.MilkSolver.roadsFrom(window.MILK_ROADS); done(d); };
       tag.onerror = function () { done(d); };          // не загрузился — считаем по прямой, как раньше
       document.head.appendChild(tag);
