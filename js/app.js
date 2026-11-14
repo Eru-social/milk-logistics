@@ -81,11 +81,12 @@
   // Если состав данных изменился (появились остановки, которых нет в эталоне), эталон не подходит.
   // В режиме «меньше машин» эталон не подходит и тогда, когда он выводит больше машин, чем выбрано по весу:
   // в лёгкий день у эталона (16 машин) может оказаться меньше нарушений, но он нарушает главное правило.
-  function notWorseThanBase(p) {
+  function notWorseThanBase(p, inp) {          // inp — данные; без него текущие (предложение передаёт свою копию)
+    inp = inp || input();
     if (!BASE) return p;
-    var b = window.MilkSolver.fromAssignment(input(), BASE.assignment);
+    var b = window.MilkSolver.fromAssignment(inp, BASE.assignment);
     if (b.leftover) return p;
-    if (state.settings.fleetPriority !== 'overtime' && b.used > p.used) return p;
+    if (inp.settings.fleetPriority !== 'overtime' && b.used > p.used) return p;
     if (b.problems.length < p.problems.length || (b.problems.length === p.problems.length && b.km < p.km - 0.05)) {
       b.ms = p.ms; b.fromBase = true; return b;
     }
@@ -133,10 +134,18 @@
   }
 
   function render(fit) {
-    var p = plans[view];
-    if (!p) return;
-    var idx = eventIndex(), fleet = fleetNote(p);
-    renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
+    // Пока открыто предложение (этап 1Б), экран на время отрисовки берёт его данные и план, потом возвращает свои.
+    var keep = proposal && proposal.ok ? { state: state, best: plans.best, naive: plans.naive, view: view } : null;
+    if (keep) { state = proposal.data; plans.best = proposal.plan; plans.naive = proposal.naive; view = 'best'; }
+    try {
+      var p = plans[view];
+      if (!p) return;
+      var idx = eventIndex(), fleet = fleetNote(p);
+      renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
+    } finally {
+      if (keep) { state = keep.state; plans.best = keep.best; plans.naive = keep.naive; view = keep.view; }
+    }
+    renderProposal();
   }
 
   function renderMeta() {
@@ -168,34 +177,10 @@
     return '<div class="kpi"><span class="kpi-label">' + label + '</span><span class="kpi-value">' + value +
       (unit ? ' <small>' + unit + '</small>' : '') + (pill || '') + '</span><span class="kpi-sub">' + sub + '</span></div>';
   }
+  // Верхняя строка — четыре цели заказчика его словами (этап 1Б): время доставки, суммарный пробег,
+  // количество транспорта, окно доставки. Числа и плитки собирает js/proposal.js.
   function renderKpis(p) {
-    var st = state.settings, active = state.vehicles.filter(function (v) { return v.active !== false; }).length;
-    // Две независимые оценки «как сейчас» (нынешних маршрутов заказчика у нас нет):
-    //   1) со слов логистов: в среднем 45 км на маршрут × число маршрутов;
-    //   2) «план по списку»: список заказчика, нарезанный по порядку и по вместимости машин (MilkSolver.naive).
-    var refKm = st.refKmPerRoute * plans.naive.used, listKm = plans.naive.km;
-    function vs(ref) {
-      var d = ref ? (p.km - ref) / ref * 100 : 0;
-      return '<span class="pill ' + (d <= 0 ? 'good' : 'bad') + '">' + (d <= 0 ? '−' : '+') + num(Math.abs(d)) + '%</span>';
-    }
-    var longest = 0, loadSum = 0;
-    p.routes.forEach(function (r) { if (r.seq.length) { longest = Math.max(longest, st.loadMin + r.back - r.depart); loadSum += r.loadPct; } });
-    var bad = p.problems.length > 0, html = '', tol = st.overtimeToleranceMin || 0;
-    var shiftOk = longest <= st.shiftMin + Math.max(0.5, tol), shiftExact = longest <= st.shiftMin + 0.5;
-    html += tile('Пробег за день', num(p.km), 'км', '',
-      'Как сейчас, две оценки:<br>' + vs(refKm) + ' от ' + num(refKm) + ' км — ' + st.refKmPerRoute + ' км × ' + plans.naive.used +
-      ' маршрутов, со слов логистов<br>' + vs(listKm) + ' от ' + num(listKm) + ' км — «по списку»: список заказчика по порядку, нарезан по вместимости машин');
-    html += tile('Машин на линии', p.used, 'из ' + active,
-      p.used < active ? '<span class="pill good">' + (active - p.used) + ' в гараже</span>' : '',
-      p.live ? 'День идёт: снимок на ' + clock(p.live.now) + ', уже сделанное не меняется' :
-        'Средняя загрузка ' + num(p.used ? loadSum / p.used : 0) + '%, правило: не ниже ' + st.minLoadPct + '%');
-    html += tile('Самая длинная смена', hours(longest), '',
-      '<span class="pill ' + (shiftExact ? 'good' : (shiftOk ? 'warn' : 'bad')) + '">' + (shiftExact ? 'в норме' : (shiftOk ? 'в допуске ' + tol + ' мин' : 'переработка')) + '</span>',
-      'Норма ' + hours(st.shiftMin) + ' с загрузкой. Всего в рейсах ' + num(p.workMin / 60) + ' ч, последняя машина вернётся в ' + clock(p.lastBack));
-    html += tile('Нарушения правил', p.problems.length, '',
-      '<span class="pill ' + (bad ? 'bad' : 'good') + '">' + (bad ? 'нужно внимание' : 'план выполним') + '</span>',
-      'Опозданий: ' + p.lateStops + ' · переработка: ' + num(p.overtimeMin) + ' мин · перегруз: ' + num(p.overloadKg) + ' кг');
-    $('kpis').innerHTML = html;
+    $('kpis').innerHTML = window.MilkProposal.tiles(window.MilkProposal.goals(p, input(), plans.naive), p);
   }
 
   // ---------- события водителей ----------
@@ -453,7 +438,7 @@
   // Сам расчёт лежит в js/replan.js. Здесь только окно, где логист описывает, что случилось, и выбирает вариант.
   // Выбранный вариант становится черновиком; водители видят его после кнопки «Утвердить».
   var fm = null;                           // состояние окна, пока оно открыто
-  var FM_TYPES = [['breakdown', 'Сломалась машина'], ['delay', 'Задержка в пути'], ['stop', 'Точка не принимает']];
+  var FM_TYPES = [['breakdown', 'Сломалась машина'], ['delay', 'Задержка в пути'], ['stop', 'Точка не принимает'], ['later', 'Просят другое время']];
   function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 
   function openIncident(pre) {
@@ -464,7 +449,7 @@
     pre = pre || {};
     var open = selected >= 0 && plans.best.routes[selected] ? plans.best.routes[selected].vehicle.id : 0;
     var id = ids.indexOf(pre.vehicleId) >= 0 ? pre.vehicleId : (ids.indexOf(open) >= 0 ? open : ids[0]);
-    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: 40, orderId: pre.orderId || 0, action: 'retry',
+    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: 40, orderId: pre.orderId || 0, action: 'retry', laterAt: 0,
       base: base, marks: eventIndex().byStop, ids: ids, result: null, error: '', draftChanged: approvalState() === 'changed' };
     fm.at = window.MilkReplan.suggestTime(base, id, fm.marks, nowMin());
     renderIncident();
@@ -522,8 +507,12 @@
     html += '<label class="fm-row" for="fm-at"><span>Когда</span><input type="time" id="fm-at" value="' + clock(fm.at) + '"></label>';
     html += '<p class="fm-status" id="fm-status">' + esc(info.text) + '</p>';
     if (fm.type === 'delay') html += '<label class="fm-row" for="fm-delay"><span>На сколько минут</span><input type="number" id="fm-delay" min="5" step="5" value="' + fm.delayMin + '"></label>';
+    if (fm.type === 'stop' || fm.type === 'later') html += '<label class="fm-row" for="fm-stop"><span>Какая точка</span><select id="fm-stop">' + stopOptions(info) + '</select></label>';
+    if (fm.type === 'later') {             // этап 1Б: магазин просит привезти не раньше указанного времени
+      if (!fm.laterAt) fm.laterAt = Math.ceil((fm.at + state.settings.retryMin) / 30) * 30;
+      html += '<label class="fm-row" for="fm-later"><span>Привезти не раньше</span><input type="time" id="fm-later" value="' + clock(fm.laterAt) + '"></label>';
+    }
     if (fm.type === 'stop') {
-      html += '<label class="fm-row" for="fm-stop"><span>Какая точка</span><select id="fm-stop">' + stopOptions(info) + '</select></label>';
       html += '<div class="fm-row"><span>Что делаем</span><div class="seg">' +
         '<button type="button" data-action="retry"' + (fm.action === 'retry' ? ' class="on"' : '') + '>Вернуться через ' + state.settings.retryMin + ' мин</button>' +
         '<button type="button" data-action="drop"' + (fm.action === 'drop' ? ' class="on"' : '') + '>Не доставлять сегодня</button></div></div>';
@@ -546,11 +535,12 @@
     if ($('fm-at') && $('fm-at').value) fm.at = parseClock($('fm-at').value);
     if ($('fm-delay')) fm.delayMin = Math.max(1, +$('fm-delay').value || 0);
     if ($('fm-stop')) fm.orderId = +$('fm-stop').value;
+    if ($('fm-later') && $('fm-later').value) fm.laterAt = parseClock($('fm-later').value);
   }
   function runIncident() {
     readIncident();
     var res = window.MilkReplan.propose(input(), fm.base, { type: fm.type, vehicleId: fm.vehicleId, at: fm.at, delayMin: fm.delayMin,
-      orderId: fm.orderId, action: fm.action }, fm.marks);
+      orderId: fm.orderId, action: fm.action, retryAt: fm.laterAt }, fm.marks);
     if (res.ok) fm.result = res; else fm.error = res.message;
     renderIncident();
   }
@@ -579,6 +569,58 @@
     Store.approve(approved.assignment, summaryOf(plans.best)); saveLocal(); render(false);
     var n = plans.best.problems.length;
     toast(n ? 'План утверждён с нарушениями (' + n + '). Водители видят свои маршруты.' : 'План утверждён. Водители видят свои маршруты.', n ? 'warn' : '');
+  }
+
+  // ---------- предложение «было → станет» и кнопки «а если» (этап 1Б) ----------
+  // Расчёт и карточка — в js/proposal.js, формат изменений — в js/changes.js. Здесь только подключение к экрану.
+  // Пока предложение открыто, таблицы слева закрыты для правки (подсказка в карточке и всплывающая строка):
+  // иначе правка молча меняла бы данные, по которым предложение посчитано.
+  var proposal = null;
+  function openProposal(list) {
+    var opts = { solve: function (inp) { return notWorseThanBase(window.MilkFleet.solve(inp), inp); } };
+    if (approved) { opts.base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)); opts.marks = eventIndex().byStop; }
+    setStatus('Считаю предложение…');
+    proposal = window.MilkProposal.make({ input: input(), plan: plans.best, naive: plans.naive }, list, opts);
+    if (view !== 'best') setView('best'); else render(true);
+    setStatus(proposal.ok ? 'предложение посчитано за ' + num(proposal.ms / 1000, 1) + ' с, в общий план не попало' : 'предложение не построено');
+  }
+  function whatIfKey(key) {
+    var sel = $('whatif-vehicle'), vid = sel && +sel.value ? +sel.value : window.MilkProposal.leastLoaded(plans.best);
+    openProposal(window.MilkProposal.scenario(key, input(), vid));
+  }
+  function dropProposal(message) {
+    if (!proposal) return;
+    proposal = null; render(true);
+    if (message) toast(message, 'warn');
+  }
+  function applyProposal() {
+    var pr = proposal;
+    if (!pr || !pr.ok) return dropProposal();
+    proposal = null;
+    clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
+    var before = state;
+    state = { orders: pr.data.orders, vehicles: pr.data.vehicles, settings: pr.data.settings };
+    plans.best = pr.plan; plans.naive = pr.naive; selected = -1;
+    buildOrders(); buildSettings(); render(true);
+    setStatus('сохраняю…');
+    // Сначала данные, потом черновик: другие экраны получат план последним и покажут его, а не начнут считать сами.
+    window.MilkProposal.save(Store, before, state).then(function () {
+      shareDraft(); saveLocal(); setStatus('предложение применено');
+      toast('Изменения применены: новый черновик виден на всех экранах. Водители увидят его после «Утвердить».');
+    });
+  }
+  function renderProposal() {
+    var day = !!approved || !!liveOf(draft);       // идущий день: с начала дня считать нельзя, кнопок «а если» нет
+    $('whatif').innerHTML = day || proposal || !plans.best ? '' : window.MilkProposal.whatIf(plans.best, input());
+    $('proposal').innerHTML = window.MilkProposal.card(proposal);
+    $('map-flag').hidden = !(proposal && proposal.ok);
+  }
+  // Правка, пока открыто предложение: не принимаем, возвращаем таблицы как были и подсказываем, что делать.
+  function busy() {
+    if (!proposal) return false;
+    toast('Открыто предложение: сначала нажмите «Применить» или «Отменить».', 'warn');
+    buildOrders(); buildSettings(); render(false);
+    return true;
   }
 
   // ---------- таблица заказов ----------
@@ -654,6 +696,7 @@
   // Изменения копятся долю секунды и применяются разом: при сбросе демо их приходят сотни.
   function queueRemote(dataChanged) {
     if (dataChanged) remoteData = true;
+    if (dataChanged && proposal) dropProposal('Данные изменились на другом экране: предложение закрыто, откройте его заново.');
     clearTimeout(remoteTimer);
     remoteTimer = setTimeout(applyRemote, 400);
   }
@@ -699,6 +742,7 @@
       if (kind === 'draft') {
         draft = plan;
         if (!plan) return;
+        if (proposal) dropProposal('План изменился на другом экране: предложение закрыто, откройте его заново.');
         clearTimeout(fallbackTimer); clearTimeout(remoteTimer); remoteData = false;
         if (remoteStructure) { buildOrders(); remoteStructure = false; }
         showDraft(plan.author === 'base' ? 'демо сброшено: эталонный план' : 'план обновлён на другом экране');   // 'base' — черновик из reset_demo()
@@ -736,6 +780,7 @@
   // ---------- события на странице ----------
   function bind() {
     $('orders-table').addEventListener('change', function (e) {
+      if (busy()) return;
       var tr = e.target.closest('tr'), o = tr && orderById(+tr.getAttribute('data-id'));
       if (!o) return;
       if (e.target.classList.contains('kg')) { o.kg = Math.max(0, +e.target.value || 0); tr.classList.toggle('off', o.kg === 0); }
@@ -743,13 +788,14 @@
       Store.saveOrder(o); saveLocal(); schedule();
     });
     $('orders-table').addEventListener('click', function (e) {
-      if (!e.target.classList.contains('star')) return;
+      if (!e.target.classList.contains('star') || busy()) return;
       var o = orderById(+e.target.closest('tr').getAttribute('data-id'));
       o.timeExplicit = !o.timeExplicit; e.target.setAttribute('aria-pressed', o.timeExplicit);
       Store.saveOrder(o); saveLocal(); schedule();
     });
     $('order-search').addEventListener('input', function (e) { filterOrders(e.target.value.trim().toLowerCase()); });
     $('vehicles-table').addEventListener('change', function (e) {
+      if (busy()) return;
       var v = vehicleById(+e.target.getAttribute('data-id'));
       if (!v) return;
       if (e.target.classList.contains('veh-on')) v.active = e.target.checked;
@@ -757,13 +803,14 @@
       Store.saveVehicle(v); saveLocal(); schedule();
     });
     $('btn-add-vehicle').addEventListener('click', function () {
+      if (busy()) return;
       var id = state.vehicles.reduce(function (m, v) { return Math.max(m, v.id); }, 0) + 1;
       var v = { id: id, name: 'Машина ' + id + ' · 4 т', cap: 4000, active: true };
       state.vehicles.push(v); Store.saveVehicle(v); saveLocal(); schedule();
     });
     $('settings-form').addEventListener('change', function (e) {
       var key = e.target.getAttribute('data-key');
-      if (!key) return;
+      if (!key || busy()) return;
       if (e.target.type === 'checkbox') state.settings[key] = e.target.checked;
       else if (CHOICES[key]) {                    // список: берём только известное значение, иначе — по умолчанию
         var ok = CHOICES[key].some(function (c) { return c[0] === e.target.value; });
@@ -788,9 +835,10 @@
       });
     });
     $('view-best').addEventListener('click', function () { setView('best'); });
-    $('view-naive').addEventListener('click', function () { setView('naive'); });
+    $('view-naive').addEventListener('click', function () { if (!busy()) setView('naive'); });
     // «Пересчитать» всегда строит план с нуля, с начала дня. Если день уже перестраивали, предупреждаем.
     $('btn-recalc').addEventListener('click', function () {
+      if (busy()) return;
       var wasLive = !!liveOf(draft);
       setStatus('Считаю…');
       setTimeout(function () {
@@ -798,8 +846,16 @@
         if (wasLive) toast('План построен заново, с начала дня: перестроение из черновика убрано.', 'warn');
       }, 30);
     });
-    $('btn-approve').addEventListener('click', approvePlan);
-    $('btn-incident').addEventListener('click', function () { openIncident(); });
+    $('btn-approve').addEventListener('click', function () { if (!busy()) approvePlan(); });
+    $('btn-incident').addEventListener('click', function () { if (!busy()) openIncident(); });
+    $('whatif').addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (b && b.hasAttribute('data-whatif')) whatIfKey(b.getAttribute('data-whatif'));
+    });
+    $('proposal').addEventListener('click', function (e) {
+      if (e.target.id === 'prop-apply') applyProposal();
+      if (e.target.id === 'prop-cancel') { dropProposal(); toast('Предложение отменено: показан прежний план, в базе ничего не менялось.'); }
+    });
     $('incident').addEventListener('click', function (e) {
       if (e.target.id === 'inc-approve') approvePlan();
       if (e.target.id === 'inc-cancel') cancelProposal();
@@ -844,6 +900,7 @@
   }
 
   function resetDemo() {
+    proposal = null;
     setStatus('Сбрасываю…');
     // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.
     if (!Store.isOnline()) {

@@ -66,6 +66,39 @@
   function saveOrder(o) {
     return run(function () { return sb.from('orders').update({ kg: o.kg, from_min: o.from, time_explicit: !!o.timeExplicit, updated_at: now() }).eq('id', o.id); });
   }
+  // Запись пачкой (этап 1Б, сценарий «обычный день» меняет вес у всех заказов сразу).
+  // Вставлять строки демо-база не разрешает (правила доступа: читать и править можно, удалять и добавлять нельзя),
+  // поэтому upsert не годится. Вместо 214 отдельных запросов заказы с одинаковыми новыми значениями
+  // правятся одним запросом (update … where id in (…)): после ×0,7 разных весов несколько десятков.
+  // Запросы идут по 6 одновременно, чтобы не душить сеть. Другие экраны всё равно получают правку по каждой строке,
+  // но сами не пересчитывают: они ждут черновик, который этот экран сохранит после записи.
+  // list — правки вида { id, kg?, from?, timeExplicit? }: только поля, которые поменялись.
+  function saveOrders(list) {
+    if (!online || !list.length) return Promise.resolve(null);
+    var groups = {}, keys = [];
+    list.forEach(function (o) {
+      var row = {};
+      if ('kg' in o) row.kg = o.kg;
+      if ('from' in o) row.from_min = o.from;
+      if ('timeExplicit' in o) row.time_explicit = !!o.timeExplicit;
+      var key = JSON.stringify(row);
+      if (!groups[key]) { groups[key] = { row: row, ids: [] }; keys.push(key); }
+      groups[key].ids.push(o.id);
+    });
+    var next = 0, failed = null;
+    function worker() {
+      if (next >= keys.length) return Promise.resolve();
+      var g = groups[keys[next++]];
+      return sb.from('orders').update(Object.assign({ updated_at: now() }, g.row)).in('id', g.ids)
+        .then(check).catch(function (e) { failed = e; }).then(worker);
+    }
+    var pool = [];
+    for (var i = 0; i < Math.min(6, keys.length); i++) pool.push(worker());
+    return Promise.all(pool).then(function () {
+      if (failed) { console.warn('Не удалось сохранить заказы:', failed.message); if (Store.onError) Store.onError(failed); }
+      return { requests: keys.length, failed: !!failed };
+    });
+  }
   function saveVehicle(v) {
     return run(function () { return sb.from('vehicles').upsert({ id: v.id, name: v.name, cap: v.cap, active: v.active !== false, updated_at: now() }); });
   }
@@ -107,7 +140,7 @@
   }
 
   var Store = {
-    load: load, subscribe: subscribe, saveOrder: saveOrder, saveVehicle: saveVehicle, saveSettings: saveSettings,
+    load: load, subscribe: subscribe, saveOrder: saveOrder, saveOrders: saveOrders, saveVehicle: saveVehicle, saveSettings: saveSettings,
     saveDraft: function (a, s) { return savePlan('draft', a, s); },
     approve: function (a, s) { return savePlan('approved', a, s); },
     addEvent: addEvent, reset: reset, onError: null,

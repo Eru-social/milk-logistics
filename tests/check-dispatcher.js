@@ -31,7 +31,7 @@ function makeWorld(storage) {
 (async () => {
   const storage = {};
   const A = makeWorld(storage);
-  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/map.js', 'js/app.js'].forEach(A.load);
+  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/map.js', 'js/app.js'].forEach(A.load);
   await A.flush();
   const text = id => A.el(id).innerHTML || A.el(id).textContent;
   console.log('диспетчер открыт без сервера:', A.el('conn').textContent, '|', A.el('status').textContent);
@@ -84,5 +84,49 @@ function makeWorld(storage) {
     A.fire('settings-form', 'change', s); await A.flush();
     console.log('переключатель → ' + value + ':', A.el('status').textContent, '|', (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1].slice(0, 60));
   }
+  // Этап 1Б: верхняя строка — четыре цели заказчика; пять кнопок «а если»: открыть → отменить → открыть → применить.
+  for (const t of ['Время доставки', 'Суммарный пробег', 'Количество транспорта', 'Окно доставки']) if (text('kpis').indexOf(t) < 0) throw new Error('в верхней строке нет «' + t + '»');
+  console.log('\nКнопки «а если»:');
+  for (const key of ['normal', 'unload25', 'small200', 'minus1', 'priority']) {
+    A.fire('btn-reset', 'click'); await A.flush();
+    if (!/data-whatif="minus1"/.test(text('whatif'))) throw new Error('нет кнопок «а если» в неутверждённом плане');
+    const kpiBefore = text('kpis'), routesBefore = text('routes');
+    const b = A.btn({ attrs: { 'data-whatif': key } });
+    A.fire('whatif', 'click', b); await A.flush();
+    if (!/prop-apply/.test(text('proposal'))) throw new Error(key + ': карточка не открылась: ' + text('proposal').slice(0, 200));
+    if (A.el('map-flag').hidden) throw new Error(key + ': на карте нет пометки «предложение»');
+    if (text('whatif') !== '') throw new Error(key + ': кнопки «а если» видны поверх открытого предложения');
+    // правка таблицы, пока предложение открыто: не принимается, подсказка
+    A.fire('orders-table', 'change', kg); await A.flush();
+    if (!/Открыто предложение/.test(A.el('toast').textContent)) throw new Error(key + ': правка при открытом предложении принята молча');
+    A.fire('proposal', 'click', { id: 'prop-cancel' }); await A.flush();
+    if (text('kpis') !== kpiBefore || text('routes') !== routesBefore) throw new Error(key + ': «Отменить» не вернуло прежний план');
+    if (text('proposal') !== '' || !A.el('map-flag').hidden) throw new Error(key + ': карточка не закрылась');
+    A.fire('whatif', 'click', b); await A.flush();
+    const goals = (text('proposal').match(/<tr class="changed">/g) || []).length;
+    A.fire('proposal', 'click', { id: 'prop-apply' }); await A.flush();
+    console.log('  ' + key + ': изменилось целей в карточке ' + goals + ' | ' + A.el('status').textContent + ' | ' + (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1].slice(0, 70));
+    if (text('proposal') !== '') throw new Error(key + ': после «Применить» карточка осталась');
+  }
+  // ошибочный список не роняет экран: карточка с отказом
+  A.fire('btn-reset', 'click'); await A.flush();
+  A.fire('whatif', 'click', A.btn({ attrs: { 'data-whatif': 'чепуха' } })); await A.flush();
+  console.log('  чепуха: ' + (/не построено/.test(text('proposal')) ? 'отказ показан' : 'карточки нет'));
+  A.fire('proposal', 'click', { id: 'prop-cancel' }); await A.flush();
+  // после утверждения кнопок «а если» нет: день идёт
+  A.fire('btn-approve', 'click'); await A.flush();
+  if (text('whatif') !== '') throw new Error('кнопки «а если» видны после утверждения плана');
+  // новый вид происшествия «просят другое время» в окне «Форс-мажор»
+  A.fire('btn-incident', 'click');
+  A.fire('fm-body', 'click', A.btn({ attrs: { 'data-type': 'later' } }));
+  const fmHtml = A.el('fm-body').innerHTML, at = /id="fm-at" value="([^"]+)"/.exec(fmHtml), stop = /<option value="(\d+)" selected>\d\d:\d\d/.exec(fmHtml);
+  A.el('fm-at').value = at ? at[1] : ''; A.el('fm-stop').value = stop ? stop[1] : '0'; A.el('fm-later').value = '14:00';
+  A.fire('fm-body', 'click', A.btn({ id: 'fm-go' }));
+  const body = A.el('fm-body').innerHTML, err = /fm-error">([^<]+)/.exec(body);
+  console.log('  форс-мажор «просят другое время»: ' + (/data-pick/.test(body) ? (/<p class="fm-lead">([^<]+)/.exec(body) || [])[1] : 'отказ: ' + (err && err[1])));
+  if (/data-pick/.test(body)) { A.fire('fm-body', 'click', A.btn({ attrs: { 'data-pick': '0' } })); console.log('  черновик: ' + A.el('approval').textContent); }
+  else A.fire('fm-body', 'click', A.btn({ id: 'fm-cancel' }));
+  A.fire('btn-reset', 'click'); await A.flush();
+
   console.log('\nЭкран диспетчера: ошибок нет');
 })().catch(e => { console.log('УПАЛО: ' + e.stack); process.exit(1); });

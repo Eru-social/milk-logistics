@@ -97,6 +97,29 @@ if (s5.remaining.length) {
   }
 }
 
+// ---------- 3б. Магазин просит привезти в другое время (этап 1Б) ----------
+// Тот же «вернуться к точке позже», только время задаёт логист. Проверки те же, что у остальных происшествий.
+console.log('\n=== 3б. Магазин у машины 5 просит привезти не раньше 14:00 (сообщили в 11:30) ===');
+if (s5.remaining.length) {
+  const oid = s5.remaining[s5.remaining.length - 1].orderId;
+  const r6 = R.propose(input, base3, { type: 'later', vehicleId: 5, at: 690, orderId: oid, retryAt: 840 }, null);
+  ok(r6.ok, 'другое время: ' + r6.message); show(r6);
+  r6.variants.forEach(v => {
+    check(v.plan, 'другое время'); same(v.plan, S.fromAssignment(input, clone(v.assignment), null, clone(v.live)), 'другое время после записи');
+    const r = v.plan.routes.find(x => x.vehicle.id === 5), x = r.stops.find(x => v.plan.stops[x.stop].orders.some(o => o.id === oid));
+    ok(x && x.start >= 840 - 0.01, 'другое время: разгрузка раньше 14:00 (' + (x && clock(x.start)) + ')');
+    ok(v.plan.dropped.length === 0, 'другое время: точка снята, а должна быть довезена');
+  });
+  // время раньше, чем «сейчас», — значит просто «как можно скорее», не раньше момента сообщения
+  const r7 = R.propose(input, base3, { type: 'later', vehicleId: 5, at: 690, orderId: oid, retryAt: 300 }, null);
+  ok(r7.ok, 'другое время в прошлом: ' + r7.message); r7.variants.forEach(v => check(v.plan, 'другое время в прошлом'));
+  for (const bad of [undefined, null, -5, 1500, NaN, '14:00']) {
+    const r8 = R.propose(input, base3, { type: 'later', vehicleId: 5, at: 690, orderId: oid, retryAt: bad }, null);
+    ok(!r8.ok, 'другое время ' + bad + ': должен быть отказ');
+  }
+  console.log('  без времени: ' + R.propose(input, base3, { type: 'later', vehicleId: 5, at: 690, orderId: oid }, null).message);
+}
+
 // ---------- 4. Поломки в разное время у каждой машины ----------
 console.log('\n=== 4. Поломка каждой машины в разное время ===');
 let worst = 0;
@@ -117,6 +140,7 @@ const odd = [
   ['задержка 0', { type: 'delay', vehicleId: 2, at: 600, delayMin: 0 }],
   ['задержка 600', { type: 'delay', vehicleId: 2, at: 600, delayMin: 600 }],
   ['точки нет', { type: 'stop', vehicleId: 2, at: 600, orderId: 99999, action: 'retry' }],
+  ['другое время, точки нет', { type: 'later', vehicleId: 2, at: 600, orderId: 99999, retryAt: 800 }],
   ['вид неизвестен', { type: 'meteor', vehicleId: 2, at: 600 }],
   ['пустое', { vehicleId: 2 }]
 ];

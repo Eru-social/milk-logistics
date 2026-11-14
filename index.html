@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=13">
+<link rel="stylesheet" href="css/style.css?v=14">
 </head>
 <body>
 
@@ -73,12 +73,15 @@
   <section class="map-wrap" aria-label="Карта маршрутов">
     <div id="map"></div>
     <p class="map-note" id="map-note"></p>
+    <p class="map-flag" id="map-flag" hidden>Предложение — ещё не общий план</p>
   </section>
 
   <aside class="panel" aria-label="Маршруты">
     <div class="panel-head"><h2>Маршруты</h2><span id="status" class="status"></span></div>
     <div class="scroll">
       <div id="feed" aria-live="polite"></div>
+      <div id="whatif"></div>
+      <div id="proposal"></div>
       <div id="incident"></div>
       <div id="problems"></div>
       <div id="fleet-note"></div>
@@ -107,16 +110,18 @@
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
-<script src="js/config.js?v=13"></script>
-<script src="js/store.js?v=13"></script>
-<script src="js/settings.js?v=13"></script>
-<script src="js/data.js?v=13"></script>
-<script src="js/roads.js?v=13"></script>
-<script src="js/base-plan.js?v=13"></script>
-<script src="js/solver.js?v=13"></script>
-<script src="js/fleet.js?v=13"></script>
-<script src="js/replan.js?v=13"></script>
-<script src="js/map.js?v=13"></script>
-<script src="js/app.js?v=13"></script>
+<script src="js/config.js?v=14"></script>
+<script src="js/store.js?v=14"></script>
+<script src="js/settings.js?v=14"></script>
+<script src="js/data.js?v=14"></script>
+<script src="js/roads.js?v=14"></script>
+<script src="js/base-plan.js?v=14"></script>
+<script src="js/solver.js?v=14"></script>
+<script src="js/fleet.js?v=14"></script>
+<script src="js/replan.js?v=14"></script>
+<script src="js/changes.js?v=14"></script>
+<script src="js/proposal.js?v=14"></script>
+<script src="js/map.js?v=14"></script>
+<script src="js/app.js?v=14"></script>
 </body>
 </html>

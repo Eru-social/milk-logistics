@@ -254,12 +254,14 @@
         (r.seq.length - r.cut) + ' оставшихся, разгрузка около ' + clock(x.start) + '.');
     });
     lines.push(backText(r, base.routes[info.k]));
-    return { title: stopName(s) + ' не принимает товар (' + clock(info.at) + ')', lines: lines };
+    return { title: stopName(s) + (info.later ? ' просит привезти не раньше ' + clock(info.retryAt) : ' не принимает товар') + ' (' + clock(info.at) + ')', lines: lines };
   }
 
   // ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
   // input — те же данные, что у решателя; base — утверждённый план, как его вернул решатель;
-  // incident = { type: 'breakdown' | 'delay' | 'stop', vehicleId, at, delayMin, orderId, action: 'retry' | 'drop' };
+  // incident = { type: 'breakdown' | 'delay' | 'stop' | 'later', vehicleId, at, delayMin, orderId, action: 'retry' | 'drop', retryAt };
+  // 'later' (этап 1Б) — магазин просит привезти в другое время: то же «вернуться к точке позже», что у 'stop',
+  // только время (retryAt, минуты от полуночи) задаёт логист, а не настройка «Вернуться через».
   // marks — отметки водителей. Возвращает { ok, message, variants: [{ key, name, plan, assignment, live, title, lines, stats }] }.
   function propose(input, base, incident, marks) {
     var st = input.settings, id = incident.vehicleId, r = routeOf(base, id);
@@ -294,7 +296,7 @@
       if (c && r.stops[c - 1].arrive > T && !r.stops[c - 1].fixed) rec.t[oidOf(base, r.stops[c - 1].stop)] = r1(r.stops[c - 1].start + info.delay);
       rec.ready = r1(Math.max(rec.ready, T) + info.delay);
       touch[k] = true;
-    } else if (incident.type === 'stop') {
+    } else if (incident.type === 'stop' || incident.type === 'later') {
       var stop = -1, j;
       base.stops.forEach(function (s, i) { s.orders.forEach(function (o) { if (o.id === incident.orderId) stop = i; }); });
       j = r.seq.indexOf(stop);
@@ -311,9 +313,11 @@
         var source = live.from[oid];           // по пути к этой точке была перегрузка — значит, груз уже забран
         if (source !== undefined) r.seq.forEach(function (other) { if (live.from[oidOf(base, other)] === source) delete live.from[oidOf(base, other)]; });
       }
-      info.stop = stop; info.action = incident.action === 'drop' ? 'drop' : 'retry';
+      var later = incident.type === 'later';
+      if (later && !(typeof incident.retryAt === 'number' && isFinite(incident.retryAt) && incident.retryAt >= 0 && incident.retryAt < 24 * 60)) return fail('Не указано, к какому времени привезти.');
+      info.stop = stop; info.action = !later && incident.action === 'drop' ? 'drop' : 'retry'; info.later = later;
       if (info.action === 'drop') live.dropped.push(oid);
-      else live.retry[oid] = info.retryAt = Math.round(at + st.retryMin);
+      else live.retry[oid] = info.retryAt = later ? Math.round(Math.max(at, incident.retryAt)) : Math.round(at + st.retryMin);
       touch[k] = true;
     } else return fail('Неизвестный вид происшествия.');
 
