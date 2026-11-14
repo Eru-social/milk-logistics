@@ -255,3 +255,23 @@ button, input { font: inherit; color: inherit; }
 .proposal-actions { display: flex; gap: 8px; }
 .map-flag { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); margin: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: 13px; z-index: 5; }
 .map-flag[hidden] { display: none; }
+
+/* Команда словами (этап 2): поле «Что изменилось?», примеры фраз, карточка «Я понял так» */
+.assistant { margin-bottom: 10px; display: grid; gap: 6px; font-size: 13px; }
+.as-line { display: flex; gap: 6px; }
+.as-line input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+.as-examples { display: flex; flex-wrap: wrap; gap: 4px; }
+.as-examples .btn { font-size: 12px; padding: 4px 8px; color: var(--muted); }
+.as-card { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+.as-rows { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.as-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 6px; align-items: center; }
+.as-kind { grid-column: 1; color: var(--muted); font-size: 12px; }
+.as-body { grid-column: 1; line-height: 1.9; }
+.as-body select, .as-body input { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; max-width: 100%; }
+.as-body input[type="number"] { width: 80px; }
+.as-del { grid-column: 2; grid-row: 1 / span 2; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.as-del:hover { color: var(--bad); }
+.as-questions { margin: 0; padding-left: 18px; color: var(--warn); font-weight: 500; }
+.as-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.as-add select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+.as-queue { margin: 0; padding-left: 18px; }

@@ -53,6 +53,7 @@
 - Шрифты Golos Text и Unbounded — Google Fonts, лицензия OFL.
 - supabase-js — клиент базы данных, лицензия MIT.
 - qrcode-generator — QR-код для страницы водителя, лицензия MIT.
+- Языковая модель для команды словами — внешний сервис (по умолчанию Google Gemini), подключается ключом в секретах Supabase; её код в проект не входит.
 
 ## База данных
 
@@ -61,7 +62,7 @@
 
 ## Проверки
 
-Из корня проекта: `for t in tests/check-*.js; do node $t || echo ПРОВАЛ $t; done`.
+Из корня проекта: `for t in tests/check-*.js; do node $t || echo ПРОВАЛ $t; done`. Серверная функция «команда словами»: `deno run tests/check-function.ts`; с настоящей моделью: `node tools/check-phrases.js`.
 Эталонный план заново: `node tools/make-base-plan.js` (около минуты), затем применить `tools/base-plan.sql` к базе и выложить `js/base-plan.js`.
 
 Весь остальной код написан для этого проекта.

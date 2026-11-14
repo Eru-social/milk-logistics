@@ -31,7 +31,7 @@ function makeWorld(storage) {
 (async () => {
   const storage = {};
   const A = makeWorld(storage);
-  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/map.js', 'js/app.js'].forEach(A.load);
+  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/map.js', 'js/app.js'].forEach(A.load);
   await A.flush();
   const text = id => A.el(id).innerHTML || A.el(id).textContent;
   console.log('диспетчер открыт без сервера:', A.el('conn').textContent, '|', A.el('status').textContent);
@@ -126,6 +126,40 @@ function makeWorld(storage) {
   console.log('  форс-мажор «просят другое время»: ' + (/data-pick/.test(body) ? (/<p class="fm-lead">([^<]+)/.exec(body) || [])[1] : 'отказ: ' + (err && err[1])));
   if (/data-pick/.test(body)) { A.fire('fm-body', 'click', A.btn({ attrs: { 'data-pick': '0' } })); console.log('  черновик: ' + A.el('approval').textContent); }
   else A.fire('fm-body', 'click', A.btn({ id: 'fm-cancel' }));
+  A.fire('btn-reset', 'click'); await A.flush();
+
+  // команда словами (этап 2): модель поддельная, отвечает так, как ответила бы на фразу
+  console.log('\nкоманда словами:');
+  const answer = changes => () => Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, changes, questions: [] }) });
+  const send = async text => { A.el('as-text').value = text; A.fire('assistant', 'click', A.btn({ id: 'as-send' })); await A.flush(); return text_('as-card'); };
+  const text_ = id => A.el(id).innerHTML;
+  A.win.fetch = answer([{ kind: 'vehicle_off', vehicle: 3 }, { kind: 'vehicle_off', vehicle: 9 }, { kind: 'order_time', store: 'Щорса', time: '10:00' }]);
+  let cardHtml = await send('У машин 3 и 9 водители заболели, магазин на Щорса просит после 10');
+  if (!/Я понял так/.test(cardHtml) || !/найдено 5, выберите/.test(cardHtml)) throw new Error('карточка «Я понял так» не та: ' + cardHtml.slice(0, 300));
+  A.fire('assistant', 'click', A.btn({ id: 'as-go' })); await A.flush();
+  if (!/выберите магазин/.test(A.el('toast').textContent) || text('proposal') !== '') throw new Error('посчитано без выбора магазина');
+  const pickEl = A.btn({ attrs: { 'data-row': '2', 'data-field': 'pick' } }); pickEl.value = '1';
+  A.fire('assistant', 'change', pickEl); await A.flush();
+  A.fire('assistant', 'click', A.btn({ id: 'as-go' })); await A.flush();
+  if (!/prop-apply/.test(text('proposal'))) throw new Error('предложение по команде не открылось: ' + text('proposal').slice(0, 300));
+  console.log('  фраза автора → карточка → выбор магазина → предложение: ' + (text('proposal').match(/<li>[^<]+/g) || []).map(x => x.slice(4)).join('; '));
+  A.fire('proposal', 'click', { id: 'prop-cancel' }); await A.flush();
+  A.win.fetch = () => Promise.reject(new Error('нет сети'));
+  cardHtml = await send('машина 5 не выходит');
+  if (!/Заполните вручную/.test(cardHtml)) throw new Error('без сети нет пустой карточки: ' + cardHtml.slice(0, 200));
+  A.el('as-add-kind').value = 'vehicle_off'; A.fire('assistant', 'click', A.btn({ id: 'as-add' })); await A.flush();
+  A.fire('assistant', 'click', A.btn({ id: 'as-go' })); await A.flush();
+  console.log('  без сети: ' + (/модель недоступна|Модель недоступна/i.test(cardHtml) ? 'сообщение есть' : 'нет сообщения') + ', ручная строка → ' + (/prop-apply/.test(text('proposal')) ? 'предложение открылось' : 'предложения нет'));
+  if (!/prop-apply/.test(text('proposal'))) throw new Error('ручная строка не дала предложения');
+  A.fire('proposal', 'click', { id: 'prop-cancel' }); await A.flush();
+  A.fire('btn-approve', 'click'); await A.flush();
+  if (!/Машина 4 сломалась/.test(text('as-examples'))) throw new Error('после утверждения примеры фраз не поменялись');
+  A.win.fetch = answer([{ kind: 'breakdown', vehicle: 4 }]);
+  await send('Машина 4 сломалась');
+  A.fire('assistant', 'click', A.btn({ id: 'as-go' })); await A.flush();
+  if (A.el('fm-overlay').hidden || !/<option value="4" selected>/.test(A.el('fm-body').innerHTML)) throw new Error('окно «Форс-мажор» не открылось с машиной 4: ' + A.el('toast').textContent);
+  console.log('  день идёт: «Машина 4 сломалась» → окно «Форс-мажор», машина 4 выбрана');
+  A.fire('fm-body', 'click', A.btn({ id: 'fm-cancel' }));
   A.fire('btn-reset', 'click'); await A.flush();
 
   console.log('\nЭкран диспетчера: ошибок нет');

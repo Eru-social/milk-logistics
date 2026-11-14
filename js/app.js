@@ -447,11 +447,21 @@
     base.routes.forEach(function (r) { if (r.seq.length && !r.broken) ids.push(r.vehicle.id); });
     if (!ids.length) { toast('Нет машин в рейсе: перестраивать нечего.', 'warn'); return; }
     pre = pre || {};
+    // Этап 2: команда словами заранее заполняет окно (pre). Машина не в рейсе — молча брать другую нельзя.
+    if (pre.vehicleId && ids.indexOf(pre.vehicleId) < 0) {
+      var pv = vehicleById(pre.vehicleId);
+      toast((pv ? pv.name : 'Машина ' + pre.vehicleId) + ' сейчас не в рейсе: перестраивать нечего.', 'warn'); return;
+    }
     var open = selected >= 0 && plans.best.routes[selected] ? plans.best.routes[selected].vehicle.id : 0;
     var id = ids.indexOf(pre.vehicleId) >= 0 ? pre.vehicleId : (ids.indexOf(open) >= 0 ? open : ids[0]);
-    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: 40, orderId: pre.orderId || 0, action: 'retry', laterAt: 0,
+    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: pre.delayMin || 40, orderId: pre.orderId || 0, action: pre.action || 'retry', laterAt: pre.laterAt || 0,
       base: base, marks: eventIndex().byStop, ids: ids, result: null, error: '', draftChanged: approvalState() === 'changed' };
-    fm.at = window.MilkReplan.suggestTime(base, id, fm.marks, nowMin());
+    fm.at = pre.at != null ? pre.at : window.MilkReplan.suggestTime(base, id, fm.marks, nowMin());
+    if (pre.orderId && (fm.type === 'stop' || fm.type === 'later') &&
+        !window.MilkReplan.status(base, id, fm.at, fm.marks).remaining.some(function (x) { return x.orderId === pre.orderId; })) {
+      var po = orderById(pre.orderId);
+      fm.error = 'Точки «' + (po ? po.name : pre.orderId) + '» нет среди оставшихся у этой машины к ' + clock(fm.at) + '. Проверьте время и точку.';
+    }
     renderIncident();
     $('fm-overlay').hidden = false;
   }
@@ -576,6 +586,14 @@
   // Пока предложение открыто, таблицы слева закрыты для правки (подсказка в карточке и всплывающая строка):
   // иначе правка молча меняла бы данные, по которым предложение посчитано.
   var proposal = null;
+  var assistant = null;                    // команда словами (js/assistant.js, этап 2): поле «Что изменилось?» и карточка «Я понял так»
+  // Машина, которая везёт заказ по утверждённому плану: команда словами называет магазин, а окну «Форс-мажор» нужна машина.
+  function vehicleOfOrder(oid) {
+    if (!approved) return null;
+    var p = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), vid = null;
+    p.routes.forEach(function (r) { r.seq.forEach(function (i) { p.stops[i].orders.forEach(function (o) { if (o.id === oid) vid = r.vehicle.id; }); }); });
+    return vid;
+  }
   function openProposal(list) {
     var opts = { solve: function (inp) { return notWorseThanBase(window.MilkFleet.solve(inp), inp); } };
     if (approved) { opts.base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)); opts.marks = eventIndex().byStop; }
@@ -614,6 +632,7 @@
     $('whatif').innerHTML = day || proposal || !plans.best ? '' : window.MilkProposal.whatIf(plans.best, input());
     $('proposal').innerHTML = window.MilkProposal.card(proposal);
     $('map-flag').hidden = !(proposal && proposal.ok);
+    if (assistant) assistant.refresh();      // примеры фраз зависят от того, идёт ли день
   }
   // Правка, пока открыто предложение: не принимаем, возвращаем таблицы как были и подсказываем, что делать.
   function busy() {
@@ -892,6 +911,11 @@
     $('qr-overlay').addEventListener('click', function (e) { if (e.target === $('qr-overlay')) $('qr-overlay').hidden = true; });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { $('qr-overlay').hidden = true; if (fm) closeIncident(); } });
     $('btn-reset').addEventListener('click', resetDemo);
+    // Команда словами: режим (до утверждения или день идёт) определяет программа, а не логист (решение 5).
+    assistant = window.MilkAssistant.mount('assistant', {
+      data: input, live: function () { return !!approved || !!liveOf(draft); }, busy: busy, toast: toast,
+      openProposal: openProposal, openIncident: function (pre) { if (!busy()) openIncident(pre); }, vehicleOfOrder: vehicleOfOrder
+    });
   }
   function setView(v) {
     view = v; selected = -1;

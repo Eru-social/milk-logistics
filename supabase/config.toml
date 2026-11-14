@@ -1,0 +1,7 @@
+# Настройки Supabase для серверной функции «команда словами» (этап 2).
+# verify_jwt = false: сайт обращается к функции с публичным ключом (sb_publishable_…), это не JWT-токен.
+# Защиту лимита делает сама функция: длина фразы, запросы в минуту, дневной предел (supabase/functions/assistant/handler.ts).
+project_id = "mhdulbsrtmcdxrzeamqk"
+
+[functions.assistant]
+verify_jwt = false
