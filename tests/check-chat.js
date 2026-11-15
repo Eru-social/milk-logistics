@@ -44,7 +44,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   // ---------- 1. Открытие ----------
   console.log('1. Новый экран открывается');
   ok(log() === '' && !/chat-head|Что изменилось\?|решаете вы/.test(P.text('chat')), 'чат пустой: без приветствия и заголовка');
-  ok(/data-hint="normal"/.test(P.text('ch-hints')) && /data-hint="minus1"/.test(P.text('ch-hints')), 'подсказки «А если…» под полем');
+  ok(/data-hint="unload25"/.test(P.text('ch-hints')) && /data-hint="minus1"/.test(P.text('ch-hints')) && !/data-hint="normal"/.test(P.text('ch-hints')), 'подсказки «А если…» под полем (обычного дня среди них нет: это кнопка «Завтра»)');
   ok(P.el('btn-incident').hidden === true, 'кнопки «Форс-мажор» нет');
   ok(P.text('whatif') === '' && P.text('proposal') === '' && P.text('assistant') === '', 'старые блоки пустые');
   ok(P.el('ch-text').placeholder === '', 'поле ввода пустое, без подсказки');
@@ -56,9 +56,9 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   console.log('2. Подсказки без ИИ');
   noAi(); const calls0 = P.aiCalls;
   const kpi0 = P.text('kpis'), routes0 = P.text('routes');
-  click('', { 'data-hint': 'normal' }); await tick();
-  ok(/class="msg me">Обычный день: вес на 30% меньше/.test(log()), 'подсказка видна как сообщение логиста');
-  ok(/Без ИИ/.test(log()) && /Понял так/.test(log()) && /Вес всех заказов ×0,7/.test(log()), '«понял так» без ИИ: вес ×0,7');
+  click('', { 'data-hint': 'unload25' }); await tick();
+  ok(/class="msg me">Разгрузка 25 мин вместо 30/.test(log()), 'подсказка видна как сообщение логиста');
+  ok(/Без ИИ/.test(log()) && /Понял так/.test(log()) && /Разгрузка в обычной точке, мин»: 30 → 25/.test(log()), '«понял так» без ИИ: разгрузка 30 → 25');
   ok(/prop-apply/.test(log()) && /Было<\/th><th>Станет/.test(log()), 'сразу предложение «было → станет», без кнопки «Посчитать»');
   ok(!/id="as-go"/.test(log()), 'карточки с «Посчитать» нет');
   ok(!P.el('map-flag').hidden, 'на карте пометка «предложение»');
@@ -178,7 +178,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   // ---------- 6. День идёт ----------
   console.log('6. День идёт');
   P.fire('btn-approve', 'click'); await tick();
-  ok(/data-hint="breakdown"/.test(P.text('ch-hints')) && !/data-hint="normal"/.test(P.text('ch-hints')), 'подсказки сменились на происшествия');
+  ok(/data-hint="breakdown"/.test(P.text('ch-hints')) && !/data-hint="unload25"/.test(P.text('ch-hints')), 'подсказки сменились на происшествия');
   // Две беды в одной фразе → по очереди, само
   answer([{ kind: 'delay', vehicle: 2, minutes: 40 }, { kind: 'later', store: 'Евроопт на Суворова', time: '14:00' }]);
   await send('Машина 2 задерживается на 40 минут, Евроопт на Суворова просит после 14');
@@ -221,28 +221,39 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   clean('день идёт');
   P.fire('btn-reset', 'click'); await tick(1000);
   ok(log() === '', 'после сброса чат чистый');
-  ok(/data-hint="normal"/.test(P.text('ch-hints')), 'после сброса — подсказки «до утверждения»');
+  ok(/data-hint="unload25"/.test(P.text('ch-hints')), 'после сброса — подсказки «до утверждения»');
 
   // ---------- 7. «Завтра»: обычный день ----------
   console.log('7. «Завтра» — обычный день');
   {
     const kpiToday = P.text('kpis');
-    P.fire('view-tomorrow', 'click'); await tick(500);
+    P.fire('view-tomorrow', 'click'); await tick(1500);
     const k = P.text('kpis'), used = +(/Количество транспорта<\/span><span class="kpi-value">(\d+)/.exec(k) || [])[1];
     const kt = k.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
     ok(/44,[56] т/.test(k) && used >= 11 && used <= 12, 'завтра: вес 44,6 т, машин ' + used + ' (по весу, остальные в гараже)');
     ok(/Переработки нет/.test(kt) && /— в норме 8 ч/.test(kt) && /10 из 10 важных вовремя/.test(kt), 'завтра: смена не больше 8 часов, важные вовремя: ' + kt.slice(-160));
     ok(/Все правила соблюдены/.test(P.text('problems')), 'завтра: все принципы заказчика выполнены: ' + P.text('problems').replace(/<[^>]+>/g, ' ').slice(0, 200));
-    ok(/мелкая точка — до 250 кг/.test(P.el('status').textContent), 'завтра: допущение о мелкой точке видно');
-    ok(P.el('btn-approve').disabled, 'завтра: «Утвердить» закрыто (только просмотр)');
+    ok(/мелкая точка — до 250 кг/.test(P.el('status').textContent) && /В гараже: /.test(P.text('routes')), 'завтра: допущение о мелкой точке видно, машины в гараже видны');
+    ok(!P.el('btn-approve').disabled && /План не утверждён/.test(P.el('approval').textContent), 'завтра — рабочий день: «Утвердить» открыто');
+    const saved = JSON.parse(P.storage['milk.plan.v3']);
+    ok(saved.settings.day === 'tomorrow' && saved.orders.reduce((a, o) => a + o.kg, 0) < 45000, 'завтра сохранено: данные обычного дня и отметка дня');
     clean('завтра');
-    P.fire('view-best', 'click'); await tick();
-    ok(P.text('kpis') === kpiToday, '«Сегодня» вернуло план дня максимальной загрузки');
-    P.fire('view-tomorrow', 'click'); await tick(500);
-    click('', { 'data-hint': 'normal' }); await tick();
-    ok(/prop-apply/.test(log()) && P.el('view-best').classList, 'предложение из чата считается от «Сегодня»');
-    click('prop-cancel'); await tick();
-    P.fire('btn-reset', 'click'); await tick(1000);
+    // утверждаем и ломаем машину — выезжает резервная из гаража
+    P.fire('btn-approve', 'click'); await tick();
+    ok(/Утверждён в/.test(P.el('approval').textContent), 'завтра утверждено');
+    const vid = +(/class="chip route-num"[^>]*>(\d+)</.exec(P.text('routes')) || [])[1];
+    answer([{ kind: 'breakdown', vehicle: vid, at: '08:30' }]);
+    await send('Машина ' + vid + ' сломалась в 8:30');
+    ok(/data-act="approve"/.test(lastMsg()), 'поломка завтра: перестроение посчитано');
+    console.log('   поломка машины ' + vid + ' в 8:30: ' + (/резервная, стояла в гараже/.test(lastMsg()) ? 'выехала резервная из гаража' : 'точки забрали соседи'));
+    ok(/без переработки/.test(lastMsg()) && /довезём всё/.test(lastMsg()), 'поломка завтра: довезём всё и без переработки');
+    click('', { 'data-act': 'approve', 'data-msg': actMsg('approve') }); await tick();
+    ok(/Утверждено в/.test(log()), 'перестроение утверждено');
+    clean('поломка завтра');
+    // «Сегодня» — обратно день максимальной загрузки
+    P.fire('view-best', 'click'); await tick(1000);
+    ok(P.text('kpis') === kpiToday && /План не утверждён/.test(P.el('approval').textContent) && log() === '', '«Сегодня» вернуло день максимальной загрузки, не утверждён, чат чистый');
+    ok(!JSON.parse(P.storage['milk.plan.v3']).settings.day, 'отметка «завтра» снята');
   }
 
   // ---------- 8. Два экрана ----------
@@ -255,11 +266,17 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     const clickOn = (Pg, id, attrs) => Pg.fire('chat', 'click', button(id, attrs));
     clickOn(A, '', { 'data-hint': 'unload25' }); await clock.advance(300);
     ok(/prop-apply/.test(A.text('ch-log')), 'на экране A открыто предложение');
-    clickOn(B, '', { 'data-hint': 'normal' }); await clock.advance(300);
+    clickOn(B, '', { 'data-hint': 'small200' }); await clock.advance(300);
     clickOn(B, 'prop-apply'); await clock.advance(40000);
-    ok(/Применено/.test(B.text('ch-log')), 'экран B применил «обычный день»');
+    ok(/Применено/.test(B.text('ch-log')), 'экран B применил «мелкая точка до 200 кг»');
     ok(!/prop-apply/.test(A.text('ch-log')) && /изменились на другом экране|изменился на другом экране/.test(A.text('ch-log')), 'на экране A предложение закрыто с объяснением');
     ok(A.text('kpis') === B.text('kpis'), 'оба экрана показывают один план');
+    // «Завтра» на экране A — экран B получает тот же рабочий день
+    A.fire('view-tomorrow', 'click'); await clock.advance(60000);
+    ok(/44,[56] т/.test(B.text('kpis')) && A.text('kpis') === B.text('kpis'), '«Завтра» с экрана A: экран B показывает тот же обычный день');
+    ok(server.tables.app_settings.length && JSON.stringify(server.tables.app_settings).indexOf('tomorrow') >= 0, 'в базе отметка «завтра»');
+    B.fire('view-best', 'click'); await clock.advance(30000);
+    ok(/63,6 т/.test(A.text('kpis')) && A.text('kpis') === B.text('kpis'), '«Сегодня» с экрана B: оба экрана снова в дне максимальной загрузки');
   }
 
   console.log(fails ? '\nЧат: ОШИБОК ' + fails + ' из ' + checks : '\nЧат: все ' + checks + ' проверок прошли');

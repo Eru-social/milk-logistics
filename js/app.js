@@ -145,19 +145,16 @@
     // Пока открыто предложение (этап 1Б), экран на время отрисовки берёт его данные и план, потом возвращает свои.
     var keep = proposal && proposal.ok ? { state: state, best: plans.best, naive: plans.naive, view: view } : null;
     if (keep) { state = proposal.data; plans.best = proposal.plan; plans.naive = proposal.naive; view = 'best'; }
-    // «Завтра» (обычный день): экран на время отрисовки берёт данные и план обычного дня, потом возвращает свои.
-    var day = !keep && view === 'tomorrow' && tomorrow ? { state: state, naive: plans.naive } : null;
-    if (day) { state = tomorrow.data; plans.tomorrow = tomorrow.plan; plans.naive = tomorrow.naive; }
     try {
       var p = plans[view];
       if (!p) return;
-      var idx = day ? { lastByVehicle: {}, byStop: {} } : eventIndex(), fleet = fleetNote(p);   // отметки водителей — только «сегодня»
+      var idx = eventIndex(), fleet = fleetNote(p);
       renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
     } finally {
       if (keep) { state = keep.state; plans.best = keep.best; plans.naive = keep.naive; view = keep.view; }
-      if (day) { state = day.state; plans.naive = day.naive; }
     }
     renderProposal();
+    markDay();
   }
 
   var metaText = '';
@@ -1027,9 +1024,10 @@
       if (!e.target.classList.contains('move') || !e.target.value) return;
       moveStop(+e.target.getAttribute('data-oid'), +e.target.value);
     });
-    $('view-best').addEventListener('click', function () { setView('best'); });
+    // «Сегодня»: если в работе «Завтра» — вернуть день максимальной загрузки (это «Сбросить демо»), иначе показать план.
+    $('view-best').addEventListener('click', function () { if (isTomorrow() && !OLD) { if (!busy()) resetDemo(); } else setView('best'); });
     $('view-naive').addEventListener('click', function () { if (!busy()) setView('naive'); });
-    $('view-tomorrow').addEventListener('click', function () { if (!busy()) showTomorrow(); });
+    $('view-tomorrow').addEventListener('click', goTomorrow);
     if (OLD) $('view-tomorrow').hidden = true;       // старый экран — как был
     // «Пересчитать» всегда строит план с нуля, с начала дня. Если день уже перестраивали, предупреждаем.
     $('btn-recalc').addEventListener('click', function () {
@@ -1112,38 +1110,73 @@
   }
   function setView(v) {
     view = v; selected = -1;
-    $('view-best').classList.toggle('on', v === 'best'); $('view-naive').classList.toggle('on', v === 'naive');
-    $('view-tomorrow').classList.toggle('on', v === 'tomorrow');
     render(true);
   }
-  // «Завтра» — обычный день: те же точки и машины, вес каждого заказа на 30% меньше (решение 18).
-  // Все принципы заказчика должны выполняться (просьба автора 15 ноября): загрузка не ниже 90%, один рейс, центр — машина
-  // 1,5 т, важные точки вовремя, смена не больше 8 часов вместе с часом загрузки. При «мелкой точке» до 100 кг это
-  // в обычный день невозможно: работы ~102 ч, на машину 7 ч → нужно ≥15 машин, а при загрузке ≥90% можно не больше 12.
-  // Порог мелкой точки — наше допущение (логисты сказали только «мелким хватает 10 минут»); при 250 кг выполняется всё:
-  // 11 машин, загрузка 100%, смены до 7 ч 59 мин, нарушений 0. Поэтому «Завтра» считается с порогом не ниже 250 кг.
-  // Только для просмотра: утверждают план «Сегодня».
+  // Кнопки «Сегодня» / «Завтра» / «По списку»: какой день в работе и какой план показан.
+  function isTomorrow() { return !!(state && state.settings && state.settings.day === 'tomorrow'); }
+  function markDay() {
+    $('view-best').classList.toggle('on', view === 'best' && !isTomorrow());
+    $('view-tomorrow').classList.toggle('on', view === 'best' && isTomorrow());
+    $('view-naive').classList.toggle('on', view === 'naive');
+  }
+
+  // «ЗАВТРА» — рабочий обычный день (просьба автора 15 ноября): те же точки и машины, вес каждого заказа на 30% меньше
+  // (решение 18). Это не отдельный просмотр, а другой день в работе: данные и план уходят в базу, дальше всё как обычно —
+  // «Утвердить», чат, перестроение (в гараже есть машины — при поломке выезжает резервная), телефоны водителей, второй экран.
+  // «Сегодня» возвращает день максимальной загрузки — это то же, что «Сбросить демо».
+  // Все принципы заказчика должны выполняться: загрузка не ниже 90%, один рейс, центр — машина 1,5 т, важные точки вовремя,
+  // смена не больше 8 часов вместе с часом загрузки. При «мелкой точке» до 100 кг это в обычный день невозможно: работы
+  // ~102 ч, на машину 7 ч → нужно ≥15 машин, а при загрузке ≥90% можно не больше 12. Порог мелкой точки — наше допущение
+  // (логисты сказали только «мелким хватает 10 минут»); при 250 кг выполняется всё (11–12 машин, нарушений 0).
+  // Наши допуски (10 минут сверх смены, 1% перегруза) в этот день выключены: «8 часов и не больше».
+  // Отметка дня — правило day: 'tomorrow' в общих правилах (база его хранит, «Сбросить демо» стирает).
   var TOMORROW_SMALL_KG = 250;
-  // Считается при первом нажатии (2–3 с) и запоминается, пока не поменялись заказы, машины или правила.
-  var tomorrow = null;
-  function tomorrowKey() { return JSON.stringify([state.orders.map(function (o) { return o.kg; }), state.vehicles.map(function (v) { return [v.active !== false, v.cap]; }), state.settings]); }
-  function showTomorrow() {
-    if (tomorrow && tomorrow.key === tomorrowKey()) return setView('tomorrow');
-    setStatus('Считаю план на завтра…');
+  function tomorrowData() {
+    var seed = { depot: DATA.depot, orders: clone(DATA.orders), vehicles: clone(DATA.vehicles), settings: clone(DEFAULTS), roads: roads };
+    var data = window.MilkChanges.apply(seed, [{ kind: 'scale_kg', factor: 0.7 }]);
+    data.settings = Object.assign(clone(DEFAULTS), { smallStopKg: Math.max(DEFAULTS.smallStopKg, TOMORROW_SMALL_KG),
+      overtimeToleranceMin: 0, overloadTolerancePct: 0, day: 'tomorrow' });
+    return data;
+  }
+  function goTomorrow() {
+    if (busy()) return;
+    if (isTomorrow()) { if (view !== 'best') setView('best'); return; }
+    proposal = null;
+    if (chat) chat.reset();
+    setStatus('Готовлю завтра…');
     setTimeout(function () {
-      var data = window.MilkChanges.apply(input(), [{ kind: 'scale_kg', factor: 0.7 }]);
-      // Без наших допусков «в пределах 10 минут» и «1% перегруза»: правило заказчика — «не больше 8 часов», кузов не резиновый.
-      data.settings = Object.assign({}, data.settings, { smallStopKg: Math.max(data.settings.smallStopKg, TOMORROW_SMALL_KG), overtimeToleranceMin: 0, overloadTolerancePct: 0 });
-      var plan = window.MilkFleet.solve(data);
-      tomorrow = { key: tomorrowKey(), data: data, plan: plan, naive: window.MilkSolver.naive(data) };
-      setView('tomorrow');
-      setStatus('завтра: вес заказов на 30% меньше; мелкая точка — до ' + data.settings.smallStopKg + ' кг (наше допущение)');
+      var data = tomorrowData(), plan = window.MilkFleet.solve(data);
+      function finish(before, message) {
+        clearTimeout(solveTimer); clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false; remoteStructure = false;
+        state = { orders: data.orders, vehicles: data.vehicles, settings: data.settings };
+        approved = null; events = []; plans.best = plan; plans.naive = window.MilkSolver.naive(input());
+        view = 'best'; selected = -1;
+        buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
+        render(true);
+        var said = 'завтра: вес заказов на 30% меньше; мелкая точка — до ' + state.settings.smallStopKg + ' кг (наше допущение)';
+        if (!before) { shareDraft(); saveLocal(); setStatus(said); if (message) toast(message, 'warn'); return; }
+        setStatus('сохраняю завтра…');
+        // Сначала данные, потом план: другие экраны получат план последним и покажут его, а не начнут считать сами.
+        window.MilkProposal.save(Store, before, state).then(function () {
+          shareDraft(); saveLocal();
+          setStatus(said);
+          toast('Завтра — обычный день: план построен, не утверждён. Водители увидят его после «Утвердить план».');
+        });
+      }
+      if (!Store.hasServer()) return finish(null);
+      // В базе сначала исходный день (как «Сбросить демо»: снимает утверждение и отметки водителей), потом — завтрашние данные.
+      Store.reset().then(function (done) { return done ? Store.load() : null; }).then(function (db) {
+        if (!db) { setConn('Без сервера: правки видны только здесь', 'warn'); return finish(null, 'Нет связи с базой: завтра открыто только на этом экране.'); }
+        setConn('Онлайн', 'good');
+        Store.subscribe(remote);
+        finish({ orders: db.orders, vehicles: db.vehicles, settings: Object.assign(clone(DEFAULTS), db.settings || {}) });
+      });
     }, 30);
   }
 
   function resetDemo() {
     proposal = null;
-    if (view === 'tomorrow') setView('best');
+    view = 'best';
     if (chat) chat.reset();
     setStatus('Сбрасываю…');
     // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.

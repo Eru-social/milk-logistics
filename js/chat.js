@@ -24,7 +24,8 @@
   'use strict';
   var A = window.MilkAssistant, C = window.MilkChanges, P = window.MilkProposal;
   var MAX_TEXT = A.MAX_TEXT;
-  var PLAN_HINTS = ['normal', 'unload25', 'small200', 'minus1', 'priority'];
+  // «Обычный день: вес на 30% меньше» убран из подсказок: обычный день теперь — кнопка «Завтра» (рабочий день, все правила).
+  var PLAN_HINTS = ['unload25', 'small200', 'minus1', 'priority'];
   var LIVE_HINTS = [['breakdown', 'Машина сломалась'], ['delay', 'Задержка в пути'], ['stop_refuses', 'Точка не принимает'], ['later', 'Магазин просит другое время']];
   var INCIDENT = { breakdown: 'breakdown', delay: 'delay', stop: 'stop_refuses', later: 'later' };   // вид из окна → вид строки
 
