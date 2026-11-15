@@ -67,15 +67,15 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   click('', { 'data-hint': 'minus1' }); await tick();
   ok(/выбрала программа: номер не важен/.test(log()) && /prop-apply/.test(log()), 'минус одна машина: номер выбрала программа, сразу расчёт');
   click('', { 'data-act': 'fix', 'data-msg': actMsg('fix') }); await tick();
-  ok(/Поправляю ниже/.test(log()) && /data-field="vehicleId"/.test(lastMsg()) && !/prop-apply/.test(log()), '«Понял не так — поправить»: расчёт закрыт, строка в карточке');
-  field(0, 'vehicleId', 16); await tick();
-  ok(/<option value="16" selected>/.test(lastMsg()), 'машина поменялась на 16');
-  click('as-go'); await tick();
-  ok(/Машина 16 сегодня не выходит/.test(log()) && /prop-apply/.test(log()), 'после правки — новый расчёт');
+  ok(/Понял не так — поправляю/.test(log()) && /Что не так\? Напишите/.test(lastMsg()) && !/prop-apply/.test(log()) && !/data-field=/.test(log()), '«Понял не так»: расчёт закрыт, вопрос словами, без формы');
+  answer([{ kind: 'vehicle_off', vehicle: 16 }]);
+  await send('убери шестнадцатую');
+  ok(/^.+ сегодня не выходит\. Поправка: убери шестнадцатую$/.test(P.lastBody.text), 'поправка ушла в ИИ вместе с первой фразой: ' + P.lastBody.text);
+  ok(/Машина 16 сегодня не выходит/.test(log()) && /prop-apply/.test(log()), 'после поправки — новый расчёт');
   click('prop-apply'); await tick(1000);
   ok(/Применено: новый черновик/.test(log()) && !/prop-apply/.test(log()), 'после «Применить» в чате «Применено»');
   ok(/применено/.test(P.el('status').textContent), 'статус: ' + P.el('status').textContent);
-  ok(P.aiCalls === calls0, 'подсказки не звали ИИ');
+  ok(P.aiCalls === calls0 + 1, 'подсказки не звали ИИ (позвала только поправка словами)');
   clean('подсказки');
   P.fire('btn-reset', 'click'); await tick(1000);
   ok(!/Применено/.test(log()) && /Напишите, что изменилось/.test(log()), '«Сбросить демо» очистил чат');
@@ -85,13 +85,18 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   answer([{ kind: 'vehicle_off', vehicle: 3 }, { kind: 'vehicle_off', vehicle: 9 }, { kind: 'order_time', store: 'Щорса', time: '10:00' }]);
   await send('У машин 3 и 9 водители заболели, магазин на Щорса просит после 10');
   ok(P.lastBody && P.lastBody.mode === 'plan', 'в ИИ ушёл режим «до утверждения»');
-  ok(/msg-who">ИИ/.test(lastMsg()) && /Я понял так/.test(lastMsg()) && /найдено 5, выберите/.test(lastMsg()), 'магазинов на Щорса пять: карточка спрашивает, какой');
-  ok(P.el('ch-text').value === '', 'поле ввода очищено');
-  click('as-go'); await tick();
-  ok(/выберите магазин/.test(P.el('toast').textContent) && !/prop-apply/.test(log()), 'без выбора магазина не считает');
-  field(2, 'pick', 1); await tick();
-  click('as-go'); await tick();
-  ok(/prop-apply/.test(log()) && /Машина 3 сегодня не выходит/.test(log()) && /разгрузка не раньше 10:00/.test(log()), 'предложение по фразе автора');
+  ok(/нашёл 5 магазинов\. Какой из них\?/.test(lastMsg()) && /data-answer="4"/.test(lastMsg()) && !/<select/.test(log()), 'магазинов на Щорса пять: вопрос словами с вариантами, без формы');
+  ok(P.el('ch-text').value === '' && !/prop-apply/.test(log()), 'поле очищено, без ответа не считает');
+  const calls2 = P.aiCalls;
+  await send('тот самый');
+  ok(/Не понял, какой/.test(lastMsg()) && !/prop-apply/.test(log()), 'непонятный короткий ответ — переспросил');
+  await send('восьмой');
+  ok(P.aiCalls === calls2, 'ответ «какой магазин» разбирает наш код, без ИИ');
+  ok(/prop-apply/.test(log()) && /Машина 3 сегодня не выходит/.test(log()) && /«Магазин №8\/Щорса\/» \(Щорса 26\): разгрузка не раньше 10:00/.test(log()), 'ответ «восьмой» → магазин №8 → предложение по фразе автора');
+  click('prop-cancel'); await tick();
+  await send('У машин 3 и 9 водители заболели, магазин на Щорса просит после 10');
+  await send('на 26');
+  ok(/prop-apply/.test(lastMsg()) && /«Магазин №8\/Щорса\/» \(Щорса 26\)/.test(lastMsg()), 'ответ «на 26» → тот же магазин №8');
   click('', { 'data-hint': 'unload25' }); await tick();
   ok(/Открыто предложение/.test(P.el('toast').textContent), 'вторая подсказка при открытом предложении: «сначала Применить или Отменить»');
   click('prop-cancel'); await tick();
@@ -110,12 +115,18 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   // вопрос ИИ → ответ логиста уходит вместе с прошлой фразой
   answer([], ['На сколько процентов меньше вес?']);
   await send('Сегодня заказов меньше');
-  ok(/as-questions/.test(lastMsg()) && /На сколько процентов/.test(lastMsg()), 'вопрос ИИ виден в карточке');
+  ok(/<p>На сколько процентов меньше вес\?<\/p>/.test(lastMsg()) && !/as-card/.test(lastMsg()), 'вопрос ИИ — простым сообщением');
   answer([{ kind: 'scale_kg', factor: 0.8 }]);
   await send('на 20%');
   ok(P.lastBody.text === 'Сегодня заказов меньше. на 20%', 'ответ на вопрос ушёл вместе с прошлой фразой: ' + P.lastBody.text);
   ok(/Вес всех заказов ×0,8/.test(log()) && /prop-apply/.test(lastMsg()), 'по двум фразам — сразу расчёт');
-  ok(/Заменена новой/.test(log()), 'карточка с вопросом закрыта');
+  ok(!/data-field=/.test(log()), 'ни одной формы в переписке');
+  // кнопка-ответ на «какой магазин»
+  answer([{ kind: 'order_kg', store: 'Щорса', kg: 0 }]);
+  click('prop-cancel'); await tick();
+  await send('Магазин на Щорса отменил заказ');
+  click('', { 'data-answer': 3 }); await tick();
+  ok(/class="msg me">«Доброном № 2135 \(Щорса\)», Щорса 58/.test(log()) && /Доброном № 2135 \(Щорса\)» \(Щорса 58\): заказ отменён/.test(log()) && /prop-apply/.test(lastMsg()), 'нажали вариант — ответ виден как сообщение, сразу расчёт');
   click('prop-cancel'); await tick();
 
   // ---------- 4. ИИ недоступен ----------
@@ -194,9 +205,13 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(P.aiCalls === calls1, 'подсказка в идущем дне не звала ИИ');
   if (/data-act="fix"/.test(lastMsg())) {
     click('', { 'data-act': 'fix', 'data-msg': actMsg('fix') }); await tick();
-    ok(/data-field="at"/.test(lastMsg()) && /Утверждён в/.test(P.el('approval').textContent), '«поправить» в идущем дне: черновик снят, карточка со временем');
-    click('as-cancel'); await tick();
+    ok(/Что не так\? Напишите/.test(lastMsg()) && /Утверждён в/.test(P.el('approval').textContent), '«поправить» в идущем дне: черновик снят, вопрос словами');
   }
+  // подсказка «Точка не принимает» без магазина — спрашивает словами, ответ — улица
+  click('', { 'data-hint': 'stop_refuses' }); await tick();
+  ok(/Какой магазин\? Напишите название или улицу/.test(lastMsg()), 'подсказка без магазина: вопрос словами');
+  await send('Суворова 216');
+  ok(/data-act="approve"/.test(lastMsg()) || /msg-error/.test(lastMsg()) || /Какой из них/.test(lastMsg()), 'ответ «Суворова 216» разобран: ' + lastMsg().replace(/<[^>]+>/g, ' ').slice(0, 160));
   clean('день идёт');
   P.fire('btn-reset', 'click'); await tick(1000);
   ok(/Напишите, что изменилось на завтра/.test(log()) && !/Утверждено в/.test(log()), 'после сброса чат чистый');

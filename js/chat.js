@@ -4,8 +4,9 @@
 // Суть: логист пишет, что изменилось → ИИ переводит слова в изменения → программа сразу считает →
 // в чате «понял так» и «было → станет» → логист применяет, отменяет или поправляет. Лишних шагов нет:
 //   — если ИИ понял всё, расчёт начинается сам (без кнопки «Посчитать»);
-//   — карточка с вопросом появляется, только когда чего-то правда не хватает (какой из пяти магазинов на Щорса,
-//     на сколько минут задержка) или ИИ недоступен — тогда строки заполняются вручную;
+//   — если чего-то не хватает, чат спрашивает словами, как в переписке: ИИ — «на сколько минут?», наш код —
+//     «на Щорса пять магазинов, какой?» (можно ответить словами или нажать). Ответ уходит в ИИ вместе с прошлой фразой;
+//   — форма со строками осталась только на случай, когда ИИ недоступен (нет сети, лимит);
 //   — до утверждения номер машины не нужен: «один водитель заболел» — какую машину убрать, выбирает программа;
 //   — когда день идёт, первый вариант перестроения сразу на карте, остаётся «Утвердить» или «Отменить».
 // Подсказки под полем работают без ИИ: до утверждения — бывшие «А если…», когда день идёт — виды происшествий.
@@ -40,6 +41,10 @@
     var card = null;       // открытая карточка «Я понял так» (одна на весь чат)
     var queue = [];        // происшествия из одной фразы, которые ждут своей очереди
     var lastMode = null, sending = false, drawn = '', freshMsg = false;
+    // Чего чат ждёт от логиста после своего вопроса (уточнение — словами, как в переписке):
+    //   { type: 'ai', text, mode, joiner }   — ИИ спросил или логист сказал «понял не так»: ответ уйдёт в ИИ вместе с прошлой фразой;
+    //   { type: 'store', a, i, extra }       — какой магазин из нескольких (или не нашли): ответ разбирает наш код.
+    var pending = null;
     root.innerHTML = '<div class="chat">' +
       '<div class="chat-head"><b>Что изменилось?</b><span>чат с ИИ · решаете вы</span></div>' +
       '<div class="chat-log" id="ch-log" aria-live="polite"></div>' +
@@ -71,6 +76,7 @@
       var t = chk.ok ? chk.list.map(function (c) { return C.describe(c, d); }).join('; ') : (A.KIND_NAMES[r.kind] || r.kind) + ': ' + chk.errors.join('; ');
       return t + (r.auto ? ' (какую — выбрала программа: номер не важен)' : '');
     }
+    function summaryText(a) { var d = api.data(); return a.rows.map(function (r) { return rowText(r, d).replace(/ \(какую — выбрала.*\)$/, ''); }).join('. '); }
     function summaryHtml(a, note) {
       var d = api.data();
       return '<b>' + (a.manual ? 'Заполнено вручную' : 'Понял так') + '</b>' +
@@ -180,13 +186,71 @@
       card = push(Object.assign({ who: 'ai', kind: 'card', open: true, a: a }, extra || {}));
       draw();
     }
-    // Всё понятно — считаем сразу. Иначе карточка: только то, чего не хватает.
+    // Всё понятно — считаем сразу. Не хватает чего-то — спрашиваем словами, как в переписке.
     function understood(a, extra) {
+      extra = extra || {};
+      a.text = a.text || extra.text || '';
       a.rows.forEach(autoAt);
-      if (!complete(a)) return openCard(a, extra);
+      pending = null;
       closeCard('Заменена новой.');
-      push(Object.assign({ who: 'ai', kind: 'card', open: false, a: a, html: summaryHtml(a) }, extra || {}));
+      var d = api.data(), qs = (a.questions || []).filter(Boolean);
+      if (!a.rows.length && !qs.length) qs = ['Не понял, что поменялось. Напишите по-другому или нажмите подсказку под полем.'];
+      if (qs.length) {                      // спросил ИИ (или наша проверка его ответа): отвечают словами, ИИ получит обе фразы
+        push({ who: 'ai', kind: 'text', label: extra.noAi ? 'Программа' : 'ИИ', html:
+          (a.rows.length ? '<b>Понял так</b><ol class="msg-lines">' + a.rows.map(function (r) { return '<li>' + esc(rowText(r, d)) + '</li>'; }).join('') + '</ol>' : '') +
+          qs.map(function (q) { return '<p>' + esc(q) + '</p>'; }).join('') });
+        if (a.text) pending = { type: 'ai', text: a.text, mode: a.mode, joiner: '. ' };
+        draw(); return;
+      }
+      for (var i = 0; i < a.rows.length; i++) {
+        var r = a.rows[i];
+        if (A.needsStore(r) && !A.picked(r)) { askStore(a, i, extra); return; }
+      }
+      push(Object.assign({ who: 'ai', kind: 'card', open: false, a: a, html: summaryHtml(a) }, extra));
       run(a);
+    }
+    // Какой магазин: несколько похожих — список с кнопками-ответами; не нашли — просим назвать иначе.
+    function askStore(a, i, extra) {
+      var r = a.rows[i], g = r.groups || [], html;
+      if (g.length > 1) {
+        html = '<p>' + (r.query ? 'По словам «' + esc(r.query) + '» нашёл ' + g.length + (g.length > 4 ? ' магазинов' : ' магазина') + '. Какой из них?' : 'Какой магазин?') + '</p>' +
+          '<div class="msg-answers">' + g.map(function (x, n) { return '<button type="button" class="btn" data-answer="' + n + '">' + esc(x.title) + '</button>'; }).join('') + '</div>' +
+          '<p class="msg-note">Можно нажать или написать: номер, улицу, название.</p>';
+      } else html = '<p>' + (r.query ? 'Не нашёл магазин «' + esc(r.query) + '». ' : '') + 'Какой магазин? Напишите название или улицу.</p>';
+      var m = push({ who: 'ai', kind: 'text', label: 'Программа', html: html, store: true });
+      pending = { type: 'store', a: a, i: i, extra: extra, msg: m };
+      draw();
+    }
+    // Ответ логиста на «какой магазин». Разбирает наш код; если ответ не про магазин — это новая фраза.
+    var ORDINALS = ['перв', 'втор', 'трет', 'четв', 'пят', 'шест', 'седьм', 'восьм', 'девят', 'десят'];
+    function answerStore(text, n) {
+      var p = pending, r = p.a.rows[p.i], d = api.data(), g = r.groups || [];
+      if (n == null && g.length > 1) {
+        var low = String(text).toLowerCase().trim();
+        // «восьмой» — скорее «магазин №8», чем восьмой по списку; если такого номера нет — по порядку в списке
+        ORDINALS.forEach(function (o, k) {
+          if (n != null || !new RegExp('^' + o).test(low)) return;
+          var byNum = []; g.forEach(function (x, j) { if (new RegExp('(^|[^0-9])' + (k + 1) + '([^0-9]|$)').test(x.title)) byNum.push(j); });
+          n = byNum.length === 1 ? byNum[0] : (k < g.length ? k : null);
+        });
+        if (n == null) {                    // номер, улица, название — среди уже найденных
+          var sub = d.orders.filter(function (o) { return g.some(function (x) { return x.ids.indexOf(o.id) >= 0; }); });
+          var hit = A.findStores(text, sub);
+          if (hit.length === 1) g.forEach(function (x, k) { if (x.title === hit[0].title) n = k; });
+        }
+        if (n == null) return false;
+      } else if (n == null) {               // не нашли раньше — ищем по новым словам среди всех заказов
+        var all = A.findStores(text, d.orders);
+        if (!all.length) return false;
+        r.query = text; r.groups = all; r.pick = all.length === 1 ? 0 : null;
+        if (r.pick == null) { askStore(p.a, p.i, p.extra); return true; }
+      }
+      if (n != null) r.pick = n;
+      if (p.msg) p.msg.html = p.msg.html.replace(/<div class="msg-answers">[\s\S]*?<\/div>/, '').replace(/<p class="msg-note">Можно нажать[\s\S]*?<\/p>/, '');
+      pending = null;
+      autoAt(r);
+      understood(p.a, p.extra);             // следующий неясный магазин — снова вопрос; всё ясно — расчёт
+      return true;
     }
     function run(a) {
       if (a.mode !== mode()) { say('Пока я думал, план утвердили или сбросили. Напишите ещё раз.'); draw(); return; }
@@ -203,18 +267,18 @@
             var html = P.card(p);
             api.dropProposal();
             push({ who: 'ai', kind: 'proposal', open: false, last: html, note: 'Поправьте и напишите снова.' });
-          } else if (p) push({ who: 'ai', kind: 'proposal', open: true, rows: rows });
+          } else if (p) push({ who: 'ai', kind: 'proposal', open: true, rows: rows, text: a.text || summaryText(a) });
           draw();
         });
         return;
       }
       // Идущий день: каждое происшествие считается от утверждённого плана, поэтому по очереди (решение 5).
-      var d = api.data();
+      var d = api.data(), said = a.text || summaryText(a);
       queue = a.rest || [];                 // после «поправить» остальные происшествия той же фразы ждут своей очереди
       var mine = [];
       a.rows.forEach(function (r) {
         var pres = A.toIncidents([r], api.vehicleOfOrder), text = rowText(r, d);
-        pres.forEach(function (p, n) { p.label = text + (pres.length > 1 ? ' (заказ ' + (n + 1) + ' из ' + pres.length + ')' : ''); p.row = copy(r); mine.push(p); });
+        pres.forEach(function (p, n) { p.label = text + (pres.length > 1 ? ' (заказ ' + (n + 1) + ' из ' + pres.length + ')' : ''); p.row = copy(r); p.said = said; mine.push(p); });
       });
       queue = mine.concat(queue);
       nextIncident();
@@ -233,7 +297,7 @@
           if (queue.length) nextIncident();
           return;
         }
-        var m = push({ who: 'ai', kind: 'live', res: res, used: -1, state: 'new', rows: [pre.row] });
+        var m = push({ who: 'ai', kind: 'live', res: res, used: -1, state: 'new', rows: [pre.row], text: pre.said });
         show(m, 0);                         // сразу на карте: логисту остаётся «Утвердить» или «Отменить»
         draw();
       });
@@ -259,8 +323,14 @@
       $('ch-text').value = '';
       if (text.length > MAX_TEXT) { say('Фраза длиннее ' + MAX_TEXT + ' знаков. Напишите короче.'); draw(); return; }
       var m = mode(), d = api.data(), follow = null;
-      // Ответ на вопрос ИИ: функция не помнит прошлых фраз, поэтому отправляем обе вместе (если влезают в лимит).
-      if (card && card.open && card.text && (card.a.questions || []).length && card.a.mode === m && (card.text + '. ' + text).length <= MAX_TEXT) follow = card.text + '. ' + text;
+      if (pending && pending.type === 'store') {
+        if (answerStore(text)) return;
+        // короткий ответ, который не подошёл ни к одному магазину, — переспрашиваем; длинный — это новая фраза
+        if (text.split(/\s+/).length <= 3) { say('Не понял, какой. Нажмите на нужный магазин выше или напишите номер, улицу, название.'); draw(); return; }
+      }
+      // Ответ на вопрос ИИ или поправка: функция не помнит прошлых фраз, поэтому отправляем обе вместе (если влезают в лимит).
+      if (pending && pending.type === 'ai' && pending.mode === m && (pending.text + pending.joiner + text).length <= MAX_TEXT) follow = pending.text + pending.joiner + text;
+      pending = null;
       var wait = say('<p class="msg-note">Разбираю фразу…</p>');
       sending = true; $('ch-send').disabled = true; draw();
       A.ask(follow || text, m, d.vehicles).then(function (res) {
@@ -268,7 +338,7 @@
         if (mode() !== m) { say('Пока ИИ думал, план утвердили или сбросили. Отправьте фразу ещё раз.'); draw(); return; }
         if (!res.ok) { openCard({ mode: m, rows: [], questions: [], manual: true, message: res.message }); return; }
         var r = A.resolve(res, api.data(), { pick: api.pickVehicles });
-        understood({ mode: m, rows: r.rows, questions: r.questions, message: '' }, { text: follow || text, follow: !!follow });
+        understood({ mode: m, rows: r.rows, questions: r.questions, message: '' }, { text: follow || text });
       });
     }
     // Подсказка без ИИ: строки собирает наш код и сразу считает.
@@ -301,16 +371,19 @@
       closeCard();
       run(a);
     }
-    // «Понял не так — поправить»: расчёт закрываем, строки — в карточку для правки.
+    // «Понял не так — поправить»: расчёт закрываем и спрашиваем словами; поправка уйдёт в ИИ вместе с первой фразой.
     function fix(m) {
-      var rows = copy(m.rows || []), md = m.kind === 'live' ? 'live' : 'plan';
-      if (m.kind === 'proposal' && m.open) api.dropProposal('Поправляю ниже ↓');
+      var md = m.kind === 'live' ? 'live' : 'plan';
+      if (m.kind === 'proposal' && m.open) api.dropProposal('Понял не так — поправляю.');
       if (m.kind === 'live') {
-        m.note = 'Поправляю ниже ↓';
+        m.note = 'Понял не так — поправляю.';
         if (m.state === 'used') api.cancelDraft(); else m.state = 'closed';
       }
-      var rest = queue; queue = [];
-      openCard({ mode: md, rows: rows, questions: [], message: '', rest: md === 'live' ? rest : null });
+      queue = [];
+      say('Что не так? Напишите — пересчитаю.');
+      pending = m.text ? { type: 'ai', text: m.text, mode: md, joiner: '. Поправка: ' } : null;
+      draw();
+      var t = $('ch-text'); if (t && t.focus) t.focus();
     }
     function act(i, what, n) {
       var m = log[i];
@@ -341,6 +414,7 @@
         if (x.kind === 'live' && x.state === 'new' && m !== 'live') { x.state = 'closed'; x.note = 'План сброшен.'; }
       });
       if (m !== 'live') queue = [];
+      if (pending && pending.type === 'store' && pending.a.mode !== m) pending = null;
       draw();
     }
     function closeProposal(note) {
@@ -363,13 +437,18 @@
       say('Сообщение водителя: ' + esc(text));
       understood({ mode: mode(), rows: [r], questions: [], message: '' }, { noAi: true });
     }
-    function reset() { log = []; card = null; queue = []; lastMode = null; drawn = ''; sending = false; $('ch-send').disabled = false; }
+    function reset() { log = []; card = null; queue = []; pending = null; lastMode = null; drawn = ''; sending = false; $('ch-send').disabled = false; }
 
     root.addEventListener('click', function (e) {
       var t = e.target && e.target.closest ? e.target.closest('button') : e.target;
       if (!t || t.disabled) return;
       if (t.id === 'ch-send') return send($('ch-text').value);
       if (t.hasAttribute('data-hint')) return hint(t.getAttribute('data-hint'));
+      if (t.hasAttribute('data-answer') && pending && pending.type === 'store') {
+        var g = pending.a.rows[pending.i].groups[+t.getAttribute('data-answer')];
+        if (g) { push({ who: 'me', kind: 'text', html: esc(g.title) }); answerStore('', +t.getAttribute('data-answer')); }
+        return;
+      }
       if (t.id === 'prop-apply' || t.id === 'prop-cancel' || t.hasAttribute('data-variant')) return api.proposalClick(e);
       if (t.hasAttribute('data-act')) return act(+t.getAttribute('data-msg'), t.getAttribute('data-act'), t.getAttribute('data-n'));
       if (!card) return;
