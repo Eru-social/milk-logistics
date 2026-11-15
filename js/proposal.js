@@ -62,12 +62,14 @@
       (unit ? ' <small>' + unit + '</small>' : '') + (pill || '') + '</span><span class="kpi-sub">' + sub + '</span></div>';
   }
   function pill(kind, text) { return '<span class="pill ' + kind + '">' + text + '</span>'; }
-  function tiles(g, plan) {
+  // opts.kmSub — подпись под пробегом вместо двух оценок «как сейчас» (новый экран: «План доставки по Гродно · …»).
+  function tiles(g, plan, opts) {
     var k = g.km, f = g.fleet, w = g.window, html = '';
     function vs(ref) { var d = ref ? (k.km - ref) / ref * 100 : 0; return pill(d <= 0 ? 'good' : 'bad', (d <= 0 ? '−' : '+') + num(Math.abs(d)) + '%'); }
     html += tile('Время доставки', num(g.delivery.pct) + '%', 'груза к 12:00', '',
       'Доля груза по весу, разгруженного к 12:00. Средний час разгрузки ' + clock(g.delivery.avgStart) + ' (по весу)');
-    html += tile('Суммарный пробег', num(k.km), 'км', '',
+    if (opts && opts.kmSub != null) html += tile('Суммарный пробег', num(k.km), 'км', '', esc(opts.kmSub));
+    else html += tile('Суммарный пробег', num(k.km), 'км', '',
       'Как сейчас, две оценки:<br>' + vs(k.refKm) + ' от ' + num(k.refKm) + ' км — ' + k.refPerRoute + ' км × ' + k.refRoutes +
       ' маршрутов, со слов логистов<br>' + vs(k.listKm) + ' от ' + num(k.listKm) + ' км — «по списку»: список заказчика по порядку, нарезан по вместимости машин');
     html += tile('Количество транспорта', f.used, 'из ' + f.active, f.garage ? pill('good', f.garage + ' в гараже') : '',

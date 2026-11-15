@@ -7,7 +7,7 @@
 <!-- Библиотеки и шрифты лежат в папке vendor/ (решение 12): показ не зависит от чужих серверов. Версии и лицензии — в README.md. -->
 <link rel="stylesheet" href="vendor/fonts/fonts.css">
 <link rel="stylesheet" href="vendor/maplibre-gl-5.24.0/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=28">
+<link rel="stylesheet" href="css/style.css?v=29">
 </head>
 <body>
 
@@ -26,6 +26,7 @@
     <span id="approval" class="pill warn">План не утверждён</span>
     <div class="seg" role="group" aria-label="Какой план показывать">
       <button type="button" id="view-best" class="on">Сегодня</button>
+      <button type="button" id="view-tomorrow" title="Обычный день: вес заказов на 30% меньше">Завтра</button>
       <button type="button" id="view-naive">По списку, для сравнения</button>
     </div>
     <button type="button" id="btn-recalc" class="btn">Пересчитать</button>
@@ -109,21 +110,21 @@
 <script src="vendor/maplibre-gl-5.24.0/maplibre-gl.js"></script>
 <script src="vendor/supabase-js-2.118.0/supabase.js"></script>
 <script src="vendor/qrcode-generator-1.4.4/qrcode.js"></script>
-<script src="js/config.js?v=28"></script>
-<script src="js/store.js?v=28"></script>
-<script src="js/settings.js?v=28"></script>
-<script src="js/data.js?v=28"></script>
-<script src="js/roads.js?v=28"></script>
-<script src="js/base-plan.js?v=28"></script>
-<script src="js/base-roads.js?v=28"></script>
-<script src="js/solver.js?v=28"></script>
-<script src="js/fleet.js?v=28"></script>
-<script src="js/replan.js?v=28"></script>
-<script src="js/changes.js?v=28"></script>
-<script src="js/proposal.js?v=28"></script>
-<script src="js/assistant.js?v=28"></script>
-<script src="js/chat.js?v=28"></script>
-<script src="js/map.js?v=28"></script>
-<script src="js/app.js?v=28"></script>
+<script src="js/config.js?v=29"></script>
+<script src="js/store.js?v=29"></script>
+<script src="js/settings.js?v=29"></script>
+<script src="js/data.js?v=29"></script>
+<script src="js/roads.js?v=29"></script>
+<script src="js/base-plan.js?v=29"></script>
+<script src="js/base-roads.js?v=29"></script>
+<script src="js/solver.js?v=29"></script>
+<script src="js/fleet.js?v=29"></script>
+<script src="js/replan.js?v=29"></script>
+<script src="js/changes.js?v=29"></script>
+<script src="js/proposal.js?v=29"></script>
+<script src="js/assistant.js?v=29"></script>
+<script src="js/chat.js?v=29"></script>
+<script src="js/map.js?v=29"></script>
+<script src="js/app.js?v=29"></script>
 </body>
 </html>

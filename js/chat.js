@@ -46,7 +46,6 @@
     //   { type: 'store', a, i, extra }       — какой магазин из нескольких (или не нашли): ответ разбирает наш код.
     var pending = null;
     root.innerHTML = '<div class="chat">' +
-      '<div class="chat-head"><b>Что изменилось?</b><span>чат с ИИ · решаете вы</span></div>' +
       '<div class="chat-log" id="ch-log" aria-live="polite"></div>' +
       '<div class="chat-line"><textarea id="ch-text" rows="2" maxlength="' + MAX_TEXT + '" aria-label="Сообщение"></textarea>' +
       '<button type="button" class="btn primary" id="ch-send">Отправить</button></div>' +
@@ -163,10 +162,6 @@
         PLAN_HINTS.forEach(function (k) { html += '<button type="button" class="btn" data-hint="' + k + '">' + esc(names[k]) + '</button>'; });
       } else LIVE_HINTS.forEach(function (h) { html += '<button type="button" class="btn" data-hint="' + h[0] + '">' + esc(h[1]) + '</button>'; });
       return html;
-    }
-    function greet(m) {
-      say(m === 'plan' ? 'Напишите, что изменилось. Я пойму, посчитаю и покажу «было → станет». Решаете вы.' :
-        'План утверждён, машины в пути. Напишите, что случилось, — перестрою остаток дня.');
     }
 
     // ---------- понимание → расчёт ----------
@@ -401,11 +396,10 @@
     // Экран зовёт refresh() после каждой отрисовки: здесь чат замечает, что план утвердили, сбросили или поменяли.
     function refresh() {
       var m = mode();
-      if (lastMode === null) greet(m);
-      else if (m !== lastMode) say(m === 'live' ? 'План утверждён. Теперь пишите, что случилось в пути.' : 'План снова не утверждён. Пишите, что изменилось.');
+      // Без приветствий и подсказок «напишите…» (просьба автора 15 ноября): поле пустое, чат начинается с первой фразы логиста.
       lastMode = m;
       $('ch-hints').innerHTML = hintsHtml(m);
-      $('ch-text').placeholder = m === 'plan' ? 'Например: один водитель заболел, магазин на Щорса просит после 10' : 'Например: машина 4 сломалась';
+      $('ch-text').placeholder = '';
       if (card && card.a.mode !== m) closeCard('План утвердили или сбросили, пока карточка была открыта. Напишите заново.');
       log.forEach(function (x) {
         if (x.kind === 'proposal' && x.open && !api.proposal()) { x.open = false; x.note = x.note || 'Предложение закрыто.'; }
@@ -439,7 +433,7 @@
       say('Сообщение водителя: ' + esc(text));
       understood({ mode: mode(), rows: [r], questions: [], message: '' }, { noAi: true });
     }
-    function reset() { log = []; card = null; queue = []; pending = null; lastMode = null; drawn = ''; sending = false; $('ch-send').disabled = false; }
+    function reset() { log = []; card = null; queue = []; pending = null; lastMode = null; drawn = null; sending = false; $('ch-send').disabled = false; }
 
     root.addEventListener('click', function (e) {
       var t = e.target && e.target.closest ? e.target.closest('button') : e.target;

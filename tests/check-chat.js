@@ -43,11 +43,13 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
 
   // ---------- 1. Открытие ----------
   console.log('1. Новый экран открывается');
-  ok(/Напишите, что изменилось\. Я пойму/.test(log()), 'чат поздоровался: ' + log().slice(0, 120));
+  ok(log() === '' && !/chat-head|Что изменилось\?|решаете вы/.test(P.text('chat')), 'чат пустой: без приветствия и заголовка');
   ok(/data-hint="normal"/.test(P.text('ch-hints')) && /data-hint="minus1"/.test(P.text('ch-hints')), 'подсказки «А если…» под полем');
   ok(P.el('btn-incident').hidden === true, 'кнопки «Форс-мажор» нет');
   ok(P.text('whatif') === '' && P.text('proposal') === '' && P.text('assistant') === '', 'старые блоки пустые');
-  ok(/Например: один водитель заболел/.test(P.el('ch-text').placeholder), 'подсказка в поле ввода');
+  ok(P.el('ch-text').placeholder === '', 'поле ввода пустое, без подсказки');
+  ok(/План доставки по Гродно · 214 заказов · 198 остановок · 63,6 т/.test(P.text('kpis')) && !/Как сейчас, две оценки/.test(P.text('kpis')) && P.el('meta').textContent === '',
+    'строка «План доставки по Гродно…» — под пробегом, оценок «как сейчас» нет, в шапке пусто');
   clean('открытие');
 
   // ---------- 2. Подсказки без ИИ: сразу расчёт ----------
@@ -78,7 +80,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(P.aiCalls === calls0 + 1, 'подсказки не звали ИИ (позвала только поправка словами)');
   clean('подсказки');
   P.fire('btn-reset', 'click'); await tick(1000);
-  ok(!/Применено/.test(log()) && /Напишите, что изменилось/.test(log()), '«Сбросить демо» очистил чат');
+  ok(log() === '', '«Сбросить демо» очистил чат: ' + log().replace(/<[^>]+>/g, ' ').slice(0, 200));
 
   // ---------- 3. Фраза → ИИ ----------
   console.log('3. Фраза → ИИ → расчёт');
@@ -176,7 +178,6 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   // ---------- 6. День идёт ----------
   console.log('6. День идёт');
   P.fire('btn-approve', 'click'); await tick();
-  ok(/План утверждён. Теперь пишите/.test(log()), 'чат заметил утверждение');
   ok(/data-hint="breakdown"/.test(P.text('ch-hints')) && !/data-hint="normal"/.test(P.text('ch-hints')), 'подсказки сменились на происшествия');
   // Две беды в одной фразе → по очереди, само
   answer([{ kind: 'delay', vehicle: 2, minutes: 40 }, { kind: 'later', store: 'Евроопт на Суворова', time: '14:00' }]);
@@ -219,8 +220,26 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(/data-act="approve"/.test(lastMsg()) || /msg-error/.test(lastMsg()) || /Какой из них/.test(lastMsg()), 'ответ «Суворова 216» разобран: ' + lastMsg().replace(/<[^>]+>/g, ' ').slice(0, 160));
   clean('день идёт');
   P.fire('btn-reset', 'click'); await tick(1000);
-  ok(/Напишите, что изменилось\. Я пойму/.test(log()) && !/Утверждено в/.test(log()), 'после сброса чат чистый');
+  ok(log() === '', 'после сброса чат чистый');
   ok(/data-hint="normal"/.test(P.text('ch-hints')), 'после сброса — подсказки «до утверждения»');
+
+  // ---------- 7. «Завтра»: обычный день ----------
+  console.log('7. «Завтра» — обычный день');
+  {
+    const kpiToday = P.text('kpis');
+    P.fire('view-tomorrow', 'click'); await tick(500);
+    const k = P.text('kpis'), used = +(/Количество транспорта<\/span><span class="kpi-value">(\d+)/.exec(k) || [])[1];
+    ok(/44,[56] т/.test(k) && used >= 10 && used <= 14, 'завтра: вес 44,5 т, машин ' + used + ' (по весу, остальные в гараже)');
+    ok(/В гараже: /.test(P.text('routes')) && P.el('btn-approve').disabled, 'завтра: машины в гараже видны, «Утвердить» закрыто (только просмотр)');
+    clean('завтра');
+    P.fire('view-best', 'click'); await tick();
+    ok(P.text('kpis') === kpiToday, '«Сегодня» вернуло план дня максимальной загрузки');
+    P.fire('view-tomorrow', 'click'); await tick(500);
+    click('', { 'data-hint': 'normal' }); await tick();
+    ok(/prop-apply/.test(log()) && P.el('view-best').classList, 'предложение из чата считается от «Сегодня»');
+    click('prop-cancel'); await tick();
+    P.fire('btn-reset', 'click'); await tick(1000);
+  }
 
   // ---------- 8. Два экрана ----------
   console.log('8. Два экрана с одной базой');

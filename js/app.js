@@ -145,22 +145,28 @@
     // Пока открыто предложение (этап 1Б), экран на время отрисовки берёт его данные и план, потом возвращает свои.
     var keep = proposal && proposal.ok ? { state: state, best: plans.best, naive: plans.naive, view: view } : null;
     if (keep) { state = proposal.data; plans.best = proposal.plan; plans.naive = proposal.naive; view = 'best'; }
+    // «Завтра» (обычный день): экран на время отрисовки берёт данные и план обычного дня, потом возвращает свои.
+    var day = !keep && view === 'tomorrow' && tomorrow ? { state: state, naive: plans.naive } : null;
+    if (day) { state = tomorrow.data; plans.tomorrow = tomorrow.plan; plans.naive = tomorrow.naive; }
     try {
       var p = plans[view];
       if (!p) return;
-      var idx = eventIndex(), fleet = fleetNote(p);
+      var idx = day ? { lastByVehicle: {}, byStop: {} } : eventIndex(), fleet = fleetNote(p);   // отметки водителей — только «сегодня»
       renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
     } finally {
       if (keep) { state = keep.state; plans.best = keep.best; plans.naive = keep.naive; view = keep.view; }
+      if (day) { state = day.state; plans.naive = day.naive; }
     }
     renderProposal();
   }
 
+  var metaText = '';
   function renderMeta() {
     var kg = 0, n = 0;
     state.orders.forEach(function (o) { if (o.kg > 0) { kg += o.kg; n++; } });
-    $('meta').textContent = 'План доставки по Гродно · ' + plural(n, 'заказ', 'заказа', 'заказов') + ' · ' +
+    metaText = 'План доставки по Гродно · ' + plural(n, 'заказ', 'заказа', 'заказов') + ' · ' +
       plural(plans.best.stopsTotal, 'остановка', 'остановки', 'остановок') + ' · ' + num(kg / 1000, 1) + ' т';
+    $('meta').textContent = OLD ? metaText : '';     // новый экран: эта строка — под пробегом в верхней строке
   }
 
   // Короткая «подпись» плана: по ней видно, совпадает ли черновик с утверждённым.
@@ -188,7 +194,7 @@
   // Верхняя строка — четыре цели заказчика его словами (этап 1Б): время доставки, суммарный пробег,
   // количество транспорта, окно доставки. Числа и плитки собирает js/proposal.js.
   function renderKpis(p) {
-    $('kpis').innerHTML = window.MilkProposal.tiles(window.MilkProposal.goals(p, input(), plans.naive), p);
+    $('kpis').innerHTML = window.MilkProposal.tiles(window.MilkProposal.goals(p, input(), plans.naive), p, OLD ? null : { kmSub: metaText });
   }
 
   // ---------- события водителей ----------
@@ -1023,6 +1029,8 @@
     });
     $('view-best').addEventListener('click', function () { setView('best'); });
     $('view-naive').addEventListener('click', function () { if (!busy()) setView('naive'); });
+    $('view-tomorrow').addEventListener('click', function () { if (!busy()) showTomorrow(); });
+    if (OLD) $('view-tomorrow').hidden = true;       // старый экран — как был
     // «Пересчитать» всегда строит план с нуля, с начала дня. Если день уже перестраивали, предупреждаем.
     $('btn-recalc').addEventListener('click', function () {
       if (busy()) return;
@@ -1105,11 +1113,29 @@
   function setView(v) {
     view = v; selected = -1;
     $('view-best').classList.toggle('on', v === 'best'); $('view-naive').classList.toggle('on', v === 'naive');
+    $('view-tomorrow').classList.toggle('on', v === 'tomorrow');
     render(true);
+  }
+  // «Завтра» — обычный день: те же точки и машины, вес каждого заказа на 30% меньше (решение 18), маршруты по тем же
+  // правилам (выбор машин по весу, js/fleet.js). Только для просмотра: утверждают и правят план «Сегодня».
+  // Считается при первом нажатии (2–3 с) и запоминается, пока не поменялись заказы, машины или правила.
+  var tomorrow = null;
+  function tomorrowKey() { return JSON.stringify([state.orders.map(function (o) { return o.kg; }), state.vehicles.map(function (v) { return [v.active !== false, v.cap]; }), state.settings]); }
+  function showTomorrow() {
+    if (tomorrow && tomorrow.key === tomorrowKey()) return setView('tomorrow');
+    setStatus('Считаю план на завтра…');
+    setTimeout(function () {
+      var data = window.MilkChanges.apply(input(), [{ kind: 'scale_kg', factor: 0.7 }]);
+      var plan = window.MilkFleet.solve(data);
+      tomorrow = { key: tomorrowKey(), data: data, plan: plan, naive: window.MilkSolver.naive(data) };
+      setView('tomorrow');
+      setStatus('завтра — обычный день: вес заказов на 30% меньше');
+    }, 30);
   }
 
   function resetDemo() {
     proposal = null;
+    if (view === 'tomorrow') setView('best');
     if (chat) chat.reset();
     setStatus('Сбрасываю…');
     // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.

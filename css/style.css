@@ -87,7 +87,8 @@ button, input { font: inherit; color: inherit; }
 /* ---------- три колонки ---------- */
 .work { flex: 1; min-height: 0; display: grid; grid-template-columns: 430px minmax(0, 1fr) 340px; gap: 12px; }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.panel-head { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 14px 8px; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 14px 8px; }
+.panel-head .status { text-align: right; }
 .panel-head h2 { font: 600 14px var(--font-display); }
 .status { color: var(--muted); font-size: 12px; }
 .scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
