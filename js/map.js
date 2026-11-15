@@ -2,12 +2,48 @@
 // Умеет два режима:
 //   1) настоящая карта (библиотека MapLibre + бесплатные плитки OpenFreeMap);
 //   2) запасная схема без подложки, если интернета или карты нет. Демо не падает в любом случае.
+// С 15 ноября (правки автора): кружки остановок, которые легли друг на друга, раздвигаются (spread);
+// focus(...) показывает заказ, выбранный в таблице слева: подлёт, кольцо, подпись.
 (function () {
   'use strict';
   var STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
   var ROAD_URL = 'https://router.project-osrm.org/route/v1/driving/';   // открытый демо-сервер дорог, только для прототипа
   var el, map = null, mode = 'none', ready = false, lastModel = null, onPick = null, depotMarker = null, popup = null;
   var roadCache = {}, markPins = [];
+  var stopFeatures = [], stopOids = [], popupOid = null, focused = null;   // для раздвигания точек и показа заказа
+
+  // ---------- точки рядом не сливаются ----------
+  // Две остановки по одному адресу (повтор магазина — отдельная остановка, их шесть) или в соседних домах
+  // на экране ложатся кружок на кружок и выглядят как одна. Поэтому перед показом кружки раздвигаются, чтобы
+  // не перекрываться. Каждый уходит от своего настоящего места не дальше MAX_SHIFT пикселей; линии маршрутов
+  // не сдвигаются. Расстояния на экране зависят от масштаба, поэтому после приближения карты считается заново.
+  // items: [{ x, y, r }] — место на экране и радиус кружка; функция дописывает sx, sy — куда его нарисовать.
+  var MAX_SHIFT = 16;
+  function spread(items) {
+    items.forEach(function (it) { it.sx = it.x; it.sy = it.y; });
+    function clamp(it) {
+      var dx = it.sx - it.x, dy = it.sy - it.y, d = Math.sqrt(dx * dx + dy * dy);
+      if (d > MAX_SHIFT) { it.sx = it.x + dx / d * MAX_SHIFT; it.sy = it.y + dy / d * MAX_SHIFT; }
+    }
+    for (var round = 0; round < 40; round++) {
+      var moved = false;
+      for (var i = 0; i < items.length; i++) {
+        for (var j = i + 1; j < items.length; j++) {
+          var a = items[i], b = items[j], need = a.r + b.r + 3, dx = b.sx - a.sx, dy = b.sy - a.sy;
+          if (Math.abs(dx) >= need || Math.abs(dy) >= need) continue;     // далеко — не считаем корень
+          var d = Math.sqrt(dx * dx + dy * dy), ux, uy;
+          if (d >= need) continue;
+          // Точки ровно в одном месте: направление берём «золотым углом» по номеру, чтобы они расходились веером.
+          if (d < 0.01) { ux = Math.cos(j * 2.39996); uy = Math.sin(j * 2.39996); d = 0; } else { ux = dx / d; uy = dy / d; }
+          var push = (need - d) / 2;
+          a.sx -= ux * push; a.sy -= uy * push; b.sx += ux * push; b.sy += uy * push;
+          clamp(a); clamp(b); moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    return items;
+  }
 
   function init(element, depot, pickHandler) {
     el = element; onPick = pickHandler;
@@ -38,6 +74,9 @@
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'sel'], 5, 2.5],
           'line-opacity': ['case', ['get', 'dim'], 0.3, 0.85] } });
+      // Кольцо вокруг заказа, выбранного в таблице слева.
+      map.addLayer({ id: 'stops-focus', type: 'circle', source: 'stops', filter: ['==', ['get', 'focus'], true],
+        paint: { 'circle-radius': 15, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#13212c', 'circle-stroke-width': 3 } });
       map.addLayer({ id: 'stops-circle', type: 'circle', source: 'stops',
         paint: { 'circle-color': ['get', 'color'], 'circle-radius': ['case', ['get', 'sel'], 9, 5],
           'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5, 'circle-opacity': ['case', ['get', 'dim'], 0.45, 1],
@@ -47,10 +86,10 @@
         paint: { 'text-color': '#ffffff' } });
       map.on('click', 'stops-circle', function (e) {
         var f = e.features[0];
-        if (popup) popup.remove();
-        popup = new maplibregl.Popup({ closeButton: false }).setLngLat(f.geometry.coordinates).setHTML(f.properties.html).addTo(map);
+        showPopup(f.geometry.coordinates, f.properties.html, +f.properties.oid || null, false);
         if (onPick) onPick(f.properties.k);
       });
+      map.on('zoomend', layoutStops);       // масштаб поменялся — точки раздвигаются заново
       map.on('click', 'routes-line', function (e) { if (onPick) onPick(e.features[0].properties.k); });
       map.on('mouseenter', 'stops-circle', function () { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', 'stops-circle', function () { map.getCanvas().style.cursor = ''; });
@@ -58,6 +97,7 @@
       depotMarker = new maplibregl.Marker({ element: pin }).setLngLat([depot.lon, depot.lat]).addTo(map);
       ready = true;
       if (lastModel) draw(lastModel, true);
+      if (focused) showFocus();            // заказ выбрали, пока карта загружалась
     });
     map.on('error', function () { /* одиночные ошибки плиток не должны ломать страницу */ });
   }
@@ -83,8 +123,8 @@
       (r.path || r.points).forEach(function (p) { coords.push([p.lon, p.lat]); });
       r.points.forEach(function (p) {
         grow(p.lon, p.lat);
-        pts.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-          properties: { k: r.k, color: p.color || r.color, sel: sel, dim: dim, n: String(p.n), html: p.html } });
+        pts.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, oids: p.oids || [], orig: [p.lon, p.lat],
+          properties: { k: r.k, color: p.color || r.color, sel: sel, dim: dim, n: String(p.n), html: p.html, oid: (p.oids || [0])[0], focus: false } });
       });
       if (!r.open) coords.push([model.depot.lon, model.depot.lat]);
       lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.road || coords },
@@ -94,19 +134,71 @@
     lines.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
     pts.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
     map.getSource('routes').setData({ type: 'FeatureCollection', features: lines });
-    map.getSource('stops').setData({ type: 'FeatureCollection', features: pts });
     markPins.forEach(function (m) { m.remove(); });
     markPins = (model.marks || []).map(function (m) {
       var pin = document.createElement('div'); pin.className = 'broken-pin'; pin.title = m.title; pin.textContent = '✕';
       return new maplibregl.Marker({ element: pin }).setLngLat([m.lon, m.lat]).addTo(map);
     });
     if (fit && box) { map.resize(); map.fitBounds([[box[0], box[1]], [box[2], box[3]]], { padding: 40, duration: 0 }); }
+    // Сведения для раздвигания хранятся рядом с точками, на карту уходят только координаты и свойства.
+    stopOids = pts.map(function (f) { return f.oids; });
+    stopFeatures = pts.map(function (f) { return { type: 'Feature', orig: f.orig, geometry: f.geometry, properties: f.properties }; });
+    layoutStops();
+  }
+  // Раздвигаем точки на экране (spread) и отдаём карте; подпись открытой точки едет вместе с ней.
+  function layoutStops() {
+    if (mode !== 'maplibre' || !ready) return;
+    var items = stopFeatures.map(function (f, i) {
+      var px = map.project(f.orig);
+      f.properties.focus = !!(focused && stopOids[i].indexOf(focused.oid) >= 0);
+      return { x: px.x, y: px.y, r: f.properties.sel ? 9 : 5 };
+    });
+    spread(items);
+    stopFeatures.forEach(function (f, i) {
+      var it = items[i], ll = it.sx === it.x && it.sy === it.y ? null : map.unproject([it.sx, it.sy]);
+      f.geometry = { type: 'Point', coordinates: ll ? [ll.lng, ll.lat] : f.orig };
+    });
+    map.getSource('stops').setData({ type: 'FeatureCollection', features: stopFeatures.map(function (f) {
+      return { type: 'Feature', geometry: f.geometry, properties: f.properties };
+    }) });
+    if (popup && popupOid) { var at = coordsOf(popupOid); if (at) popup.setLngLat(at); }
+  }
+  // Где сейчас нарисована точка заказа (после раздвигания) или null, если её нет в маршрутах.
+  function coordsOf(oid) {
+    for (var i = 0; i < stopFeatures.length; i++) if (stopOids[i].indexOf(oid) >= 0) return stopFeatures[i].geometry.coordinates;
+    return null;
+  }
+  function showPopup(at, html, oid, isFocus) {
+    if (popup) { var old = popup; popup = null; old.remove(); }
+    var pp = new maplibregl.Popup({ closeButton: isFocus, maxWidth: '280px' }).setLngLat(at).setHTML(html).addTo(map);
+    pp.on('close', function () {
+      if (popup !== pp) return;                       // закрыли старую подпись, потому что открыли новую
+      popup = null; popupOid = null;
+      if (isFocus) { focused = null; layoutStops(); }  // кольцо вокруг заказа убираем вместе с подписью
+    });
+    popup = pp; popupOid = oid;
+  }
+
+  // ---------- показать заказ на карте (клик в таблице заказов) ----------
+  // target = { oid, lat, lon, html }. Карта подлетает к точке, вокруг неё кольцо, открыта подпись.
+  function focus(target) {
+    focused = target;
+    if (mode === 'svg') { if (lastModel) drawSvg(lastModel); return; }
+    if (mode === 'maplibre' && ready) showFocus();
+  }
+  function showFocus() {
+    layoutStops();
+    var at = coordsOf(focused.oid) || [focused.lon, focused.lat];
+    showPopup(at, focused.html, focused.oid, true);
+    var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    map.flyTo({ center: at, zoom: Math.max(map.getZoom(), 14.5), duration: still ? 0 : 800 });
   }
 
   // ---------- запасная схема ----------
   function drawSvg(model) {
     var W = 1000, H = 700, pad = 30, all = [model.depot];
     model.routes.forEach(function (r) { r.points.forEach(function (p) { all.push(p); }); });
+    if (focused && isFinite(focused.lat) && isFinite(focused.lon)) all.push(focused);   // заказ не в маршрутах тоже должен попасть на схему
     var minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
     all.forEach(function (p) { minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat); minLon = Math.min(minLon, p.lon); maxLon = Math.max(maxLon, p.lon); });
     var kx = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
@@ -115,18 +207,31 @@
     var ox = (W - sx * scale) / 2, oy = (H - sy * scale) / 2;
     function X(p) { return (ox + (p.lon - minLon) * kx * scale).toFixed(1); }
     function Y(p) { return (oy + (maxLat - p.lat) * scale).toFixed(1); }
-    var hasSel = model.selected >= 0, back = '', front = '';
+    var hasSel = model.selected >= 0, back = '', front = '', ring = '';
+    // Раздвигаем кружки так же, как на карте (spread); на схеме единица — точка рисунка, а не пиксель.
+    var items = [], at = [];
     model.routes.forEach(function (r) {
+      at.push(r.points.map(function (p) {
+        var it = { x: +X(p), y: +Y(p), r: r.k === model.selected ? 9 : 5 };
+        items.push(it); return it;
+      }));
+    });
+    spread(items);
+    model.routes.forEach(function (r, ri) {
       var sel = r.k === model.selected, dim = hasSel && !sel, s = '';
+      r.points.forEach(function (p, pi) {
+        p.sx = at[ri][pi].sx.toFixed(1); p.sy = at[ri][pi].sy.toFixed(1);
+        if (focused && (p.oids || []).indexOf(focused.oid) >= 0) ring = '<circle cx="' + p.sx + '" cy="' + p.sy + '" r="16" fill="none" stroke="var(--ink)" stroke-width="3"/>';
+      });
       var d = 'M' + X(model.depot) + ' ' + Y(model.depot);
       if (r.road) r.road.forEach(function (c) { d += ' L' + X({ lon: c[0], lat: c[1] }) + ' ' + Y({ lon: c[0], lat: c[1] }); });
       else { (r.path || r.points).forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); }); if (!r.open) d += ' Z'; }
       s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : (r.road ? 2 : 1.2)) +
         '"' + (r.road ? '' : ' stroke-dasharray="2 6"') + ' stroke-linejoin="round" opacity="' + (dim ? 0.3 : 0.85) + '" style="cursor:pointer"/>';
       r.points.forEach(function (p) {
-        s += '<g data-k="' + r.k + '" opacity="' + (dim ? 0.45 : 1) + '" style="cursor:pointer"><circle cx="' + X(p) + '" cy="' + Y(p) + '" r="' + (sel ? 9 : 5) +
+        s += '<g data-k="' + r.k + '" opacity="' + (dim ? 0.45 : 1) + '" style="cursor:pointer"><circle cx="' + p.sx + '" cy="' + p.sy + '" r="' + (sel ? 9 : 5) +
           '" fill="' + (p.color || r.color) + '" stroke="#fff" stroke-width="1.5"><title>' + p.title + '</title></circle>' +
-          (sel ? '<text x="' + X(p) + '" y="' + (+Y(p) + 3.5) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" pointer-events="none">' + p.n + '</text>' : '') + '</g>';
+          (sel ? '<text x="' + p.sx + '" y="' + (+p.sy + 3.5) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" pointer-events="none">' + p.n + '</text>' : '') + '</g>';
       });
       if (sel) front += s; else back += s;
     });
@@ -134,7 +239,10 @@
     var crosses = (model.marks || []).map(function (m) {
       return '<text x="' + X(m) + '" y="' + (+Y(m) + 7) + '" text-anchor="middle" font-size="22" font-weight="700" fill="#c22b38" stroke="#fff" stroke-width="1" paint-order="stroke">✕<title>' + m.title + '</title></text>';
     }).join('');
-    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Схема маршрутов">' + back + front + depot + crosses + '</svg>';
+    // Выбранный заказ не в маршрутах (0 кг, «не везём») — кольцо на его настоящем месте.
+    if (focused && !ring && isFinite(focused.lat) && isFinite(focused.lon)) ring = '<circle cx="' + X(focused) + '" cy="' + Y(focused) + '" r="16" fill="none" stroke="var(--ink)" stroke-width="3" stroke-dasharray="4 3"/>';
+    if (ring && focused) ring = '<g>' + ring.replace('/>', '><title>' + focused.html.replace(/<br>/g, ' · ').replace(/<\/?b>/g, '') + '</title></circle>') + '</g>';
+    el.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Схема маршрутов">' + back + front + depot + crosses + ring + '</svg>';
     el.querySelectorAll('[data-k]').forEach(function (node) {
       node.addEventListener('click', function () { if (onPick) onPick(+node.getAttribute('data-k')); });
     });
@@ -214,5 +322,5 @@
     return result;
   }
 
-  window.MilkMap = { init: init, draw: draw, roadRoute: roadRoute, roadCached: roadCached, decodeLine: decodeLine, roadPath: roadPath, mode: function () { return mode; } };
+  window.MilkMap = { init: init, draw: draw, focus: focus, spread: spread, roadRoute: roadRoute, roadCached: roadCached, decodeLine: decodeLine, roadPath: roadPath, mode: function () { return mode; } };
 })();

@@ -38,6 +38,17 @@
     for (var i = 0; i < state.vehicles.length; i++) if (state.vehicles[i].id === vehicleId) return COLORS[i % COLORS.length];
     return '#888';
   }
+  // Цвет цифры на цветном квадрате карточки: чёрный или белый — какой читается лучше (как на макете автора:
+  // на красном — чёрная цифра). Считается по яркости цвета, правило WCAG.
+  function inkOn(hex) {
+    var c = /^#([0-9a-f]{6})$/i.exec(hex || '');
+    if (!c) return '#000';
+    var L = [0, 2, 4].map(function (i) {
+      var x = parseInt(c[1].substr(i, 2), 16) / 255;
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * L[0] + 0.7152 * L[1] + 0.0722 * L[2] > 0.179 ? '#000' : '#fff';
+  }
 
   // ---------- работа без сервера (запасной режим) ----------
   function roadsFromFile() { return window.MILK_ROADS ? window.MilkSolver.roadsFrom(window.MILK_ROADS) : null; }
@@ -203,7 +214,7 @@
   }
   function renderFeed() {
     if (!events.length) {
-      $('feed').innerHTML = '<p class="feed-empty">Событий от водителей пока нет. Откройте страницу водителя кнопкой «Водителю».</p>';
+      $('feed').innerHTML = '<p class="feed-empty">Событий от водителей пока нет. Откройте страницу водителя кнопкой «QR водителя».</p>';
       return;
     }
     var html = '<ul class="feed">';
@@ -240,7 +251,7 @@
     // Переработку не прячем: если машины, выбранные по весу, не укладываются в смену, логист видит это здесь
     // и рядом — где взять второй вариант (кнопку «а если» для него сделает этап 1Б).
     var hint = fleet && fleet.overtimeHint ? '<p class="problems-hint">Без переработки нужно больше машин — это второй вариант: ' +
-      'вкладка «Правила», «Что важнее, если всё сразу не сходится».</p>' : '';
+      'кнопка «Без переработки, машин сколько нужно» в блоке «А если…».</p>' : '';
     $('problems').innerHTML = '<div class="problems has"><b>Что не сходится</b><ul>' + items + '</ul>' + hint + '</div>';
   }
   // Одна строка над маршрутами: почему машин столько (текст собирает js/fleet.js).
@@ -290,33 +301,41 @@
       if (r.late > 0.5) flags += '<span class="pill bad">опоздание</span>';
       if (r.center > 0) flags += '<span class="pill bad">большая машина в центре</span>';
       if (!live && r.loadPct < st.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
-      // Пока день не начался, справа загрузка; когда идёт — что машине осталось.
-      var right = !live ? num(r.load) + ' / ' + num(r.vehicle.cap) + ' кг' :
-        (r.broken ? 'снята с маршрута' : (left ? 'осталось ' + left + ' точ.' : (r.returned ? 'на заводе' : 'едет на завод')));
-      html += '<div class="route' + (sel ? ' sel' : '') + (r.broken ? ' broken' : '') + '" style="--c:' + c + '">' +
-        '<button type="button" class="route-head" data-k="' + k + '" aria-expanded="' + sel + '">' +
-        '<span class="route-title"><span>' + esc(r.vehicle.name) + '</span><span>' + right + '</span></span>' +
-        '<span class="bar ' + barClass + '"><i style="width:' + Math.min(100, r.loadPct).toFixed(0) + '%"></i></span>' +
-        '<span class="route-meta">' + r.seq.length + ' точ. · ' + num(r.km, 1) + ' км · ' + clock(r.depart) + '–' + clock(r.back) +
-          (live ? '' : ' · загрузка ' + num(r.loadPct) + '%') + '</span>' +
+      // Карточка машины — по макету автора (15 ноября): слева цветной квадрат с номером машины (цвет её линии на карте),
+      // справа полоса загрузки «загружено/вместимость  процент» и строка «точки · км · выезд–возвращение»,
+      // внизу жирно — последняя отметка водителя. Между частями — точки «·».
+      // Пока день идёт, к строке добавляется, что машине осталось.
+      var status = !live ? '' : ' · ' + (r.broken ? 'снята с маршрута' : (left ? 'осталось ' + left + ' точ' : (r.returned ? 'на заводе' : 'едет на завод')));
+      var vnum = String(r.vehicle.name).split(' · ')[0].replace(/^Машина\s*/, '') || String(r.vehicle.id);
+      html += '<div class="route' + (sel ? ' sel' : '') + (r.broken ? ' broken' : '') + '" style="--c:' + c + ';--c-ink:' + inkOn(c) + '">' +
+        '<button type="button" class="route-head" data-k="' + k + '" aria-expanded="' + sel + '" title="' + esc(r.vehicle.name) + '">' +
+        '<span class="route-num" aria-label="' + esc(r.vehicle.name) + '">' + esc(vnum) + '</span>' +
+        '<span class="route-main">' +
+          '<span class="route-load"><span class="bar ' + barClass + '"><i style="width:' + Math.min(100, r.loadPct).toFixed(0) + '%"></i></span>' +
+          '<span>' + Math.round(r.load) + '/' + Math.round(r.vehicle.cap) + '</span><span>' + num(r.loadPct) + '%</span></span>' +
+          '<span class="route-meta">' + r.seq.length + ' точ · ' + num(r.km, 1) + ' км · ' + clock(r.depart) + '–' + clock(r.back) + status + '</span>' +
+        '</span>' +
         (last ? '<span class="route-now' + (last.kind === 'problem' ? ' bad' : '') + '">' + clockOf(last.at) + ' · ' + esc(KIND[last.kind]) +
-          (last.note ? ': ' + esc(last.note) : '') + (done ? ' · разгружено ' + done + ' из ' + r.seq.length : '') + '</span>' : '') +
+          (last.note ? ': ' + esc(last.note) : '') + ' · разгружено ' + done + '/' + r.seq.length + '</span>' : '') +
         (flags ? '<span class="route-flags">' + flags + '</span>' : '') + '</button>';
       if (sel) {
-        html += '<ol>';
+        // Список точек: время разгрузки — отдельной плашкой слева, важная точка — жёлтой плашкой «★ окно».
+        html += '<ol class="stops">';
         r.stops.forEach(function (x) {
           var s = p.stops[x.stop], oid = s.orders[0].id, mark = idx.byStop[r.vehicle.id + ':' + oid], note = '';
-          if (x.pickup) html += '<li class="pickup"><b>⇄ ' + clock(x.pickup.arrive) + '</b> Перегрузка из сломанной машины<br><span>' +
-            esc(placeName(p, x.pickup.node)) + ' · забрать ' + x.pickup.count + ' точ., ' + num(x.pickup.kg) + ' кг</span></li>';
+          if (x.pickup) html += '<li class="pickup"><span class="stop-time">⇄ ' + clock(x.pickup.arrive) + '</span><span class="stop-body"><b>Перегрузка из сломанной машины</b><span>' +
+            esc(placeName(p, x.pickup.node)) + ' · забрать ' + x.pickup.count + ' точ., ' + num(x.pickup.kg) + ' кг</span></span></li>';
           if (moved[oid] !== undefined && moved[oid] !== r.vehicle.id) note += ' · из машины ' + moved[oid];
           if (retry[oid] !== undefined && !x.fixed) note += ' · вернуться не раньше ' + clock(retry[oid]);
           if (x.late > 0.5) note += ' · опоздание ' + num(x.late) + ' мин';
           // Пока день не начался, переносить можно любую точку; когда идёт — только груз, который ещё лежит в сломанной машине.
           var canMove = view === 'best' && !x.fixed && (!live || from[oid] !== undefined);
-          html += '<li class="' + (x.late > 0.5 ? 'late ' : '') + (mark ? 'st-' + mark : (x.fixed ? 'st-done' : '')) + '"><b>' + (mark ? STOP_MARK[mark] + ' ' : '') + clock(x.start) + '</b> ' +
-            (s.important ? '★ ' : '') + esc(stopTitle(s)) +
-            '<br><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' + esc(note) + '</span>' +
-            (canMove ? moveSelect(oid, r.vehicle.id, 'Перенести', broken) : '') + '</li>';
+          html += '<li class="stop' + (x.late > 0.5 ? ' late' : '') + (mark ? ' st-' + mark : (x.fixed ? ' st-done' : '')) + '" data-oid="' + oid + '">' +
+            '<span class="stop-time">' + (mark ? STOP_MARK[mark] + ' ' : '') + clock(x.start) + '</span><span class="stop-body">' +
+            (s.important ? '<span class="stop-star" title="Важная точка: разгрузка не раньше ' + clock(s.from) + ' и не позже ' + clock(s.due) + '">★ важная · ' +
+              clock(s.from) + '–' + clock(s.due) + '</span>' : '') +
+            '<b>' + esc(stopTitle(s)) + '</b><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' + esc(note) + '</span>' +
+            (canMove ? moveSelect(oid, r.vehicle.id, 'Перенести', broken) : '') + '</span></li>';
         });
         html += '</ol>';
       }
@@ -386,6 +405,7 @@
         if (x.pickup) path.push(x.pickup.node ? p.stops[x.pickup.node - 1] : DATA.depot);
         path.push(s);
         points.push({ lat: s.lat, lon: s.lon, n: i + 1, color: st === 'done' || x.fixed ? '#9aa8b5' : null,
+          oids: s.orders.map(function (o) { return o.id; }),   // по ним клик в таблице заказов находит точку на карте
           title: esc(clock(x.start) + ' ' + title + ', ' + num(s.kg) + ' кг'),
           html: '<b>' + esc(title) + '</b><br>' + esc(s.address) + '<br>' + esc(r.vehicle.name) + ', остановка ' + (i + 1) +
             '<br>Разгрузка с ' + clock(x.start) + ', ' + num(s.kg) + ' кг' + (x.pickup ? '<br>Перед ней перегрузка в ' + clock(x.pickup.arrive) : '') +
@@ -427,6 +447,26 @@
   function pick(k) {
     selected = selected === k ? -1 : k;
     render(false);
+  }
+
+  // Клик по заказу в таблице слева: карта подлетает к его точке и открывает подпись, маршрут этой машины
+  // выделяется и раскрывается справа. Заказ, которого нет в маршрутах (0 кг или «не везём»), тоже показывается
+  // на карте — с объяснением, почему машины к нему нет.
+  function focusOrder(oid) {
+    var p = proposal && proposal.ok ? proposal.plan : plans[view], o = orderById(oid), k = -1, hit = null;
+    if (!p || !o) return;
+    p.routes.forEach(function (r, i) {
+      r.seq.forEach(function (si) { if (p.stops[si].orders.some(function (x) { return x.id === oid; })) { k = i; hit = r; } });
+    });
+    if (k >= 0 && selected !== k) { selected = k; render(false); }
+    Array.prototype.forEach.call($('orders-table').tBodies[0].rows || [], function (tr) {
+      tr.classList.toggle('focus', +tr.getAttribute('data-id') === oid);
+    });
+    var why = o.kg === 0 ? 'Заказ отменён: 0 кг' : (hit ? hit.vehicle.name : 'Сегодня не везём: ни одной машине не досталась');
+    window.MilkMap.focus({ oid: oid, lat: o.lat, lon: o.lon,
+      html: '<b>' + esc(o.name) + '</b><br>' + esc(o.address) + '<br>' + num(o.kg) + ' кг · ' + esc(why) });
+    var card = document.querySelector ? document.querySelector('.route.sel') : null;
+    if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest' });
   }
 
   // Логист переносит остановку в другую машину. Остальное не трогаем, только пересчитываем время.
@@ -863,6 +903,9 @@
       Store.saveOrder(o); saveLocal(); schedule();
     });
     $('orders-table').addEventListener('click', function (e) {
+      // Клик по названию или адресу заказа — показать его на карте (поля веса и времени остаются для правки).
+      var who = e.target.closest && e.target.closest('td.who');
+      if (who) return focusOrder(+who.closest('tr').getAttribute('data-id'));
       if (!e.target.classList.contains('star') || busy()) return;
       var o = orderById(+e.target.closest('tr').getAttribute('data-id'));
       o.timeExplicit = !o.timeExplicit; e.target.setAttribute('aria-pressed', o.timeExplicit);
@@ -914,12 +957,6 @@
     $('routes').addEventListener('change', function (e) {
       if (!e.target.classList.contains('move') || !e.target.value) return;
       moveStop(+e.target.getAttribute('data-oid'), +e.target.value);
-    });
-    document.querySelectorAll('.tabs button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        document.querySelectorAll('.tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
-        ['orders', 'vehicles', 'settings'].forEach(function (t) { $('tab-' + t).hidden = t !== b.getAttribute('data-tab'); });
-      });
     });
     $('view-best').addEventListener('click', function () { setView('best'); });
     $('view-naive').addEventListener('click', function () { if (!busy()) setView('naive'); });
@@ -1021,6 +1058,17 @@
       Store.subscribe(remote);              // если экран открывали без связи, теперь он начинает получать чужие правки
     });
   }
+
+  // ---------- дата и время в шапке ----------
+  // Часы компьютера, обновляются каждые 15 секунд. «воскресенье, 15 ноября 2026».
+  function showNow() {
+    var d = new Date();
+    $('now-time').textContent = clock(d.getHours() * 60 + d.getMinutes());
+    try { $('now-date').textContent = d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).replace(/\s*г\.?$/, ''); }
+    catch (e) { $('now-date').textContent = d.toLocaleDateString(); }
+  }
+  showNow();
+  if (typeof setInterval === 'function') setInterval(showNow, 15000);
 
   // ---------- запуск ----------
   var mapReady = window.MilkMap.init($('map'), DATA.depot, pick);

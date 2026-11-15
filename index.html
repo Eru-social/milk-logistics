@@ -7,7 +7,7 @@
 <!-- Библиотеки и шрифты лежат в папке vendor/ (решение 12): показ не зависит от чужих серверов. Версии и лицензии — в README.md. -->
 <link rel="stylesheet" href="vendor/fonts/fonts.css">
 <link rel="stylesheet" href="vendor/maplibre-gl-5.24.0/maplibre-gl.css">
-<link rel="stylesheet" href="css/style.css?v=20">
+<link rel="stylesheet" href="css/style.css?v=21">
 </head>
 <body>
 
@@ -19,17 +19,19 @@
       <p id="meta">План доставки по Гродно</p>
     </div>
   </div>
+  <!-- Настоящие дата и время (часы компьютера). Время в маршрутах — по плану: показ днём, маршруты утренние. -->
+  <div class="now" aria-live="off"><b id="now-time">--:--</b><span id="now-date"></span></div>
   <div class="top-actions">
     <span id="conn" class="pill">Подключаюсь…</span>
     <span id="approval" class="pill warn">План не утверждён</span>
     <div class="seg" role="group" aria-label="Какой план показывать">
-      <button type="button" id="view-best" class="on">Оптимизированный</button>
+      <button type="button" id="view-best" class="on">Сегодня</button>
       <button type="button" id="view-naive">По списку, для сравнения</button>
     </div>
     <button type="button" id="btn-recalc" class="btn">Пересчитать</button>
     <button type="button" id="btn-approve" class="btn primary">Утвердить план</button>
     <button type="button" id="btn-incident" class="btn danger" title="Машина сломалась, задерживается или точка не принимает товар">Форс-мажор</button>
-    <button type="button" id="btn-qr" class="btn">Водителю</button>
+    <button type="button" id="btn-qr" class="btn">QR водителя</button>
     <button type="button" id="btn-reset" class="btn">Сбросить демо</button>
   </div>
 </header>
@@ -37,13 +39,8 @@
 <section class="kpis" id="kpis" aria-label="Показатели плана"></section>
 
 <main class="work">
-  <aside class="panel" aria-label="Данные">
-    <div class="tabs" role="tablist">
-      <button type="button" role="tab" class="on" data-tab="orders">Заказы</button>
-      <button type="button" role="tab" data-tab="vehicles">Машины</button>
-      <button type="button" role="tab" data-tab="settings">Правила</button>
-    </div>
-
+  <aside class="panel" aria-label="Заказы">
+    <div class="panel-head"><h2>Заказы</h2><span class="status">нажмите на заказ — покажу на карте</span></div>
     <div class="tab-body" id="tab-orders">
       <input type="search" id="order-search" placeholder="Найти магазин или улицу" aria-label="Поиск по заказам">
       <div class="scroll">
@@ -54,18 +51,18 @@
       </div>
     </div>
 
-    <div class="tab-body" id="tab-vehicles" hidden>
-      <div class="scroll">
-        <table class="grid" id="vehicles-table">
-          <thead><tr><th>На линии</th><th>Машина</th><th>Вместимость, кг</th><th>Загрузка</th></tr></thead>
-          <tbody></tbody>
-        </table>
-        <button type="button" id="btn-add-vehicle" class="btn wide">Добавить машину</button>
-      </div>
-    </div>
-
-    <div class="tab-body" id="tab-settings" hidden>
-      <div class="scroll"><form id="settings-form" class="settings"></form></div>
+    <!-- Вкладки «Машины» и «Правила» и строка «почему машин столько» скрыты по решению автора (15 ноября):
+         машины и правила приходят из CRM (1С), логисту на этом экране они не нужны; число машин видно в плитке
+         «Количество транспорта». Разметка оставлена: расчёт, синхронизация экранов и проверки (tests/) ею пользуются.
+         Вернуть на экран — убрать hidden и добавить вкладки. -->
+    <div hidden>
+      <table class="grid" id="vehicles-table">
+        <thead><tr><th>На линии</th><th>Машина</th><th>Вместимость, кг</th><th>Загрузка</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button type="button" id="btn-add-vehicle" class="btn wide">Добавить машину</button>
+      <form id="settings-form" class="settings"></form>
+      <div id="fleet-note"></div>
     </div>
   </aside>
 
@@ -84,7 +81,6 @@
       <div id="proposal"></div>
       <div id="incident"></div>
       <div id="problems"></div>
-      <div id="fleet-note"></div>
       <div id="routes"></div>
     </div>
   </aside>
@@ -110,20 +106,20 @@
 <script src="vendor/maplibre-gl-5.24.0/maplibre-gl.js"></script>
 <script src="vendor/supabase-js-2.118.0/supabase.js"></script>
 <script src="vendor/qrcode-generator-1.4.4/qrcode.js"></script>
-<script src="js/config.js?v=20"></script>
-<script src="js/store.js?v=20"></script>
-<script src="js/settings.js?v=20"></script>
-<script src="js/data.js?v=20"></script>
-<script src="js/roads.js?v=20"></script>
-<script src="js/base-plan.js?v=20"></script>
-<script src="js/base-roads.js?v=20"></script>
-<script src="js/solver.js?v=20"></script>
-<script src="js/fleet.js?v=20"></script>
-<script src="js/replan.js?v=20"></script>
-<script src="js/changes.js?v=20"></script>
-<script src="js/proposal.js?v=20"></script>
-<script src="js/assistant.js?v=20"></script>
-<script src="js/map.js?v=20"></script>
-<script src="js/app.js?v=20"></script>
+<script src="js/config.js?v=21"></script>
+<script src="js/store.js?v=21"></script>
+<script src="js/settings.js?v=21"></script>
+<script src="js/data.js?v=21"></script>
+<script src="js/roads.js?v=21"></script>
+<script src="js/base-plan.js?v=21"></script>
+<script src="js/base-roads.js?v=21"></script>
+<script src="js/solver.js?v=21"></script>
+<script src="js/fleet.js?v=21"></script>
+<script src="js/replan.js?v=21"></script>
+<script src="js/changes.js?v=21"></script>
+<script src="js/proposal.js?v=21"></script>
+<script src="js/assistant.js?v=21"></script>
+<script src="js/map.js?v=21"></script>
+<script src="js/app.js?v=21"></script>
 </body>
 </html>

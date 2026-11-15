@@ -75,6 +75,17 @@ function makeWorld(storage) {
   A.fire('view-naive', 'click'); A.fire('view-best', 'click');
   A.fire('btn-recalc', 'click'); await A.flush(); console.log('пересчёт с нуля:', A.el('toast').textContent.slice(0, 50), '|', A.el('approval').textContent);
   A.fire('btn-reset', 'click'); await A.flush(); console.log('сброс демо:', A.el('approval').textContent, '| баннер пуст:', text('incident') === '');
+  // Правки автора 15 ноября: карточка машины по макету, время точки плашкой, клик по заказу → карта.
+  {
+    const who = A.btn({}); who.closest = sel => sel === 'td.who' ? who : (sel === 'tr' ? { getAttribute: () => '1' } : null);
+    A.fire('orders-table', 'click', who); await A.flush();          // заказ 1 — «ст 64», важная точка
+    const r = text('routes'), card = /<div class="route sel"[\s\S]*?<\/ol>/.exec(r);
+    if (!card) throw new Error('клик по заказу не раскрыл маршрут его машины');
+    if (!/class="route-num"/.test(r) || !/ точ · [\d,]+ км · \d\d:\d\d–\d\d:\d\d/.test(r)) throw new Error('карточка машины не по макету');
+    if (!/class="stop-time">\d\d:\d\d</.test(card[0]) || !/class="stop-star"[^>]*>★ важная · 06:00–07:00/.test(card[0])) throw new Error('нет плашки времени или звезды');
+    if (!/<svg[\s\S]*r="16"/.test(A.el('map').innerHTML)) throw new Error('на схеме нет кольца вокруг выбранного заказа');
+    console.log('клик по заказу «ст 64»: маршрут раскрыт, кольцо на схеме, звезда «★ важная · 06:00–07:00»');
+  }
   // Строка «почему машин столько» и переключатель «Что важнее» во вкладке «Правила»: туда и обратно.
   console.log('строка про машины:', (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1]);
   if (!/Машины выбраны по весу/.test(text('fleet-note'))) throw new Error('нет строки «Машины выбраны по весу»');

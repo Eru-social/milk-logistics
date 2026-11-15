@@ -14,6 +14,7 @@
   --warn-soft: #fff0d9;
   --bad: #c22b38;
   --bad-soft: #fde8ea;
+  --card: #c1cad3; --card-ink: #000000; --card-bar: #00b660; --card-track: rgba(255, 255, 255, .6);   /* карточка машины, макет автора */
   --font-display: "Unbounded", "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;   /* без шрифтов проекта — системные */
   --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
@@ -24,6 +25,7 @@
     --accent: #7fa2ff; --accent-soft: #1d2b4d;
     --good: #4fcf9a; --good-soft: #143326; --warn: #f0b354; --warn-soft: #3a2c10;
     --bad: #ff7d88; --bad-soft: #3d1a1e;
+    --card: #2c3843; --card-ink: #e9eff4; --card-track: rgba(255, 255, 255, .15);
     color-scheme: dark;
   }
 }
@@ -32,6 +34,7 @@
   --accent: #7fa2ff; --accent-soft: #1d2b4d;
   --good: #4fcf9a; --good-soft: #143326; --warn: #f0b354; --warn-soft: #3a2c10;
   --bad: #ff7d88; --bad-soft: #3d1a1e;
+  --card: #2c3843; --card-ink: #e9eff4; --card-track: rgba(255, 255, 255, .15);
   color-scheme: dark;
 }
 
@@ -55,6 +58,10 @@ button, input { font: inherit; color: inherit; }
 }
 .brand h1 { font: 600 17px/1.2 var(--font-display); letter-spacing: -.01em; }
 .brand p { color: var(--muted); font-size: 13px; }
+/* Дата и время в шапке */
+.now { display: grid; justify-items: center; line-height: 1.15; }
+.now b { font: 600 22px/1.1 var(--font-display); letter-spacing: -.01em; }
+.now span { color: var(--muted); font-size: 12.5px; }
 .top-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .btn {
   border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
@@ -87,12 +94,9 @@ button, input { font: inherit; color: inherit; }
 .panel-head h2 { font: 600 14px var(--font-display); }
 .status { color: var(--muted); font-size: 12px; }
 .scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 12px 12px; }
-.tabs { display: flex; gap: 4px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); }
-.tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; }
-.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
 .tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tab-body[hidden] { display: none; }
-#order-search { margin: 10px 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+#order-search { margin: 0 12px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 
 /* ---------- таблицы ---------- */
 .grid { width: 100%; border-collapse: collapse; }
@@ -101,6 +105,10 @@ button, input { font: inherit; color: inherit; }
 .grid tr.off td { opacity: .45; }
 .who b { display: block; font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
 .who span { color: var(--muted); font-size: 12px; }
+/* Клик по заказу показывает его на карте */
+.grid td.who { cursor: pointer; }
+.grid td.who:hover b { color: var(--accent); text-decoration: underline; }
+.grid tr.focus td { background: var(--accent-soft); }
 .grid input[type="number"], .grid input[type="time"], .settings input[type="number"], .settings input[type="time"] {
   width: 100%; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
 }
@@ -142,17 +150,43 @@ button, input { font: inherit; color: inherit; }
 .problems-hint { margin: 6px 0 0; color: var(--ink); }
 /* Строка «почему машин столько» над маршрутами */
 .fleet-note { margin: 0 0 10px; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: 13px; }
-.route { border: 1px solid var(--line); border-left: 5px solid var(--c, var(--line)); border-radius: 10px; margin-bottom: 8px; background: var(--surface); }
-.route.sel { border-color: var(--c); box-shadow: 0 0 0 1px var(--c); }
-.route-head { width: 100%; text-align: left; border: 0; background: none; cursor: pointer; padding: 9px 12px; display: grid; gap: 3px; }
-.route-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
-.route-title span:last-child { font-weight: 500; color: var(--muted); }
-.route-meta { color: var(--muted); font-size: 12.5px; }
 .route-flags { display: flex; flex-wrap: wrap; gap: 4px; }
-.route ol { margin: 0; padding: 4px 12px 10px 34px; font-size: 12.5px; display: grid; gap: 5px; }
-.route ol b { font-weight: 600; }
-.route ol span { color: var(--muted); }
-.route ol li.late b { color: var(--bad); }
+/* Карточка машины — по макету автора (15 ноября): серо-голубая плашка, слева квадрат цвета линии на карте
+   с номером машины, справа зелёная полоса загрузки «загружено/вместимость  %» и строка «точ · км · время»,
+   внизу жирно последняя отметка водителя. */
+.route { background: var(--card); color: var(--card-ink); border-radius: 14px; margin-bottom: 8px; scroll-margin: 6px; }
+.route.sel { box-shadow: 0 0 0 3px var(--c); }
+.route-head { width: 100%; border: 0; background: none; color: inherit; cursor: pointer; padding: 10px 12px;
+  display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 6px 12px; align-items: center; text-align: left; }
+.route-num { width: 52px; height: 52px; border-radius: 11px; background: var(--c); color: var(--c-ink);
+  display: grid; place-items: center; font: 700 26px/1 var(--font-body); }
+.route-main { display: grid; gap: 6px; min-width: 0; }
+.route-load { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
+.route-load .bar { flex: 1; height: 10px; border-radius: 5px; margin: 0; background: var(--card-track); }
+.route-load .bar i { background: var(--card-bar); border-radius: 5px; }
+.route-load .bar.warn i { background: var(--warn); }
+.route-load .bar.bad i { background: var(--bad); }
+.route-meta { font-size: 14px; text-align: center; color: var(--card-ink); }
+.route-head .route-now, .route-head .route-flags { grid-column: 1 / -1; }
+.route-head .route-now { text-align: center; font-weight: 700; font-size: 13px; color: var(--card-ink); }
+.route-head .route-now.bad { color: var(--bad); }
+.route-head .route-flags { justify-content: center; }
+/* Точки раскрытого маршрута: номер, время разгрузки отдельной тёмной плашкой, важная точка — жёлтой плашкой */
+.route ol.stops { list-style: none; counter-reset: st; margin: 0; padding: 0 10px 12px; display: grid; gap: 6px; font-size: 12.5px; }
+.stops li { display: grid; grid-template-columns: 18px 58px minmax(0, 1fr); gap: 8px; align-items: start;
+  background: var(--surface); color: var(--ink); border-radius: 10px; padding: 7px 8px; }
+.stops li.stop::before { counter-increment: st; content: counter(st); color: var(--muted); font-weight: 600; text-align: right; padding-top: 3px; }
+.stops li.pickup::before { content: ""; }
+.stop-time { background: var(--ink); color: var(--surface); font-weight: 700; font-size: 13.5px; border-radius: 6px; padding: 3px 0; text-align: center; white-space: nowrap; }
+.stops li.late .stop-time { background: var(--bad); color: #fff; }
+.stops li.st-done .stop-time { background: var(--muted); }
+.stops li.st-unloading .stop-time, .stops li.st-arrived .stop-time { background: var(--accent); color: #fff; }
+.stops li.pickup { color: var(--warn); }
+.stops li.pickup .stop-time { background: var(--warn); color: #fff; }
+.stop-body { display: grid; gap: 2px; min-width: 0; }
+.stop-body b { font-weight: 600; overflow-wrap: anywhere; }
+.stop-body > span { color: var(--muted); }
+.stop-body .stop-star { justify-self: start; background: #ffd23f; color: #3a2c00; font-weight: 700; font-size: 11.5px; border-radius: 6px; padding: 1px 7px; }
 .garage { color: var(--muted); font-size: 13px; padding: 6px 2px; }
 
 /* ---------- связь, события, уведомления ---------- */
@@ -164,11 +198,8 @@ button, input { font: inherit; color: inherit; }
 .feed li b { font-weight: 600; margin-right: 4px; }
 .feed li.bad { color: var(--bad); font-weight: 500; }
 .feed-empty { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
-.route-now { font-size: 12.5px; color: var(--accent); font-weight: 500; }
-.route-now.bad { color: var(--bad); }
-.route ol li.st-done { opacity: .55; }
-.route ol li.st-unloading b, .route ol li.st-arrived b { color: var(--accent); }
-.route ol select.move { display: block; margin-top: 4px; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); max-width: 100%; }
+.stops li.st-done { opacity: .6; }
+.stops select.move { display: block; margin-top: 4px; font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); max-width: 100%; }
 .toast { position: fixed; right: 16px; bottom: 16px; max-width: 380px; background: var(--ink); color: var(--surface); padding: 12px 16px; border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .25); font-weight: 500; opacity: 0; transform: translateY(8px); pointer-events: none; z-index: 20; }
 .toast.show { opacity: 1; transform: none; }
@@ -211,7 +242,6 @@ button, input { font: inherit; color: inherit; }
 .incident p.incident-old { color: var(--muted); font-weight: 400; }
 .incident-actions { display: flex; gap: 8px; }
 .route.broken { opacity: .8; }
-.route ol li.pickup { display: block; margin-left: -18px; color: var(--warn); font-weight: 500; }
 .dropped { border: 1px solid var(--bad); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; }
 .dropped b { color: var(--bad); font-size: 13px; }
 .dropped ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
