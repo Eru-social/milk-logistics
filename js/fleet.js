@@ -50,6 +50,7 @@
   // cap — их вместимость, active — машины на линии, stops — сколько остановок, all — нужны все машины на линии,
   // tooHeavy — груз не влезает даже во все, noSmall — есть заказы в центре, а малой машины на линии нет.
   function choose(input) {
+    if (typeof window !== 'undefined' && window.MilkLimits) input = window.MilkLimits.input(input);
     var st = input.settings, active = onLine(input);
     // Остановки собираем тем же правилом, что и решатель: так вес и «центр» считаются одинаково.
     var P = S.core.prepare(Object.assign({}, input, { vehicles: active }));
@@ -145,6 +146,8 @@
   // added — сколько машин добавлено из-за перегруза, tries — сколько раз строили маршруты.
   function solve(input, opts) {
     opts = opts || {};
+    // Странные числа поправляем по границам из js/settings.js (этап 6); на обычных данных это тот же объект.
+    if (typeof window !== 'undefined' && window.MilkLimits) input = window.MilkLimits.input(input);
     var started = Date.now(), budget = opts.timeMs > 0 ? opts.timeMs : 2500, plan;
     if (input.settings.fleetPriority === 'overtime') {    // прежнее поведение: решатель сам решает, сколько машин
       plan = S.solve(input, opts);

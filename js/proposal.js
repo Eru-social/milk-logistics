@@ -161,7 +161,8 @@
       var was = before.vehicles.filter(function (x) { return x.id === v.id; })[0];
       if (!was || (was.active !== false) !== (v.active !== false) || was.cap !== v.cap || was.name !== v.name) jobs.push(store.saveVehicle(v));
     });
-    if (JSON.stringify(before.settings) !== JSON.stringify(after.settings)) jobs.push(store.saveSettings(after.settings));
+    var keys = Object.keys(after.settings).filter(function (k) { return JSON.stringify(before.settings[k]) !== JSON.stringify(after.settings[k]); });
+    if (keys.length) jobs.push(store.saveSettings(after.settings, keys));   // только изменённые правила (этап 6)
     return Promise.all(jobs).then(function () { return { orders: orders.length, jobs: jobs.length }; });
   }
 

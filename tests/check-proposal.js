@@ -47,7 +47,9 @@ function fakeStore() {
     };
     return self;
   }
-  window.supabase = { createClient: () => ({ from: q, rpc: () => Promise.resolve({ data: null, error: null }), channel: () => ({ on() { return this; }, subscribe() {} }) }) };
+  // Правила с этапа 6 уходят функцией patch_settings, и только изменённые (два экрана не затирают друг друга).
+  const rpc = (name, args) => { if (name === 'patch_settings') sent.push({ table: 'app_settings', op: 'rpc', row: { data: args.patch } }); return Promise.resolve({ data: null, error: null }); };
+  window.supabase = { createClient: () => ({ from: q, rpc, channel: () => ({ on() { return this; }, subscribe() {} }) }) };
   window.MILK_CONFIG = { supabaseUrl: 'https://x', supabaseKey: 'k' };
   delete require.cache[require.resolve(dir + '/js/store.js')];
   require(dir + '/js/store.js');

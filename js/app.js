@@ -31,7 +31,6 @@
     var a = n % 10, b = n % 100;
     return n + ' ' + (a === 1 && b !== 11 ? one : (a >= 2 && a <= 4 && (b < 12 || b > 14) ? few : many));
   }
-  function parseClock(s) { var p = String(s).split(':'); return (+p[0] || 0) * 60 + (+p[1] || 0); }
   function orderById(id) { for (var i = 0; i < state.orders.length; i++) if (state.orders[i].id === id) return state.orders[i]; return null; }
   function vehicleById(id) { for (var i = 0; i < state.vehicles.length; i++) if (state.vehicles[i].id === id) return state.vehicles[i]; return null; }
   function input() { return { depot: DATA.depot, orders: state.orders, vehicles: state.vehicles, settings: state.settings, roads: roads }; }
@@ -562,10 +561,12 @@
     if ($('fm-stop')) $('fm-stop').innerHTML = stopOptions(info);
   }
   function readIncident() {               // на случай, если поле ещё в фокусе и его значение не успело записаться
-    if ($('fm-at') && $('fm-at').value) fm.at = parseClock($('fm-at').value);
-    if ($('fm-delay')) fm.delayMin = Math.max(1, +$('fm-delay').value || 0);
+    // Время вроде 25:00 не принимаем (остаётся прежнее), задержку держим в пределах 1 мин — 10 ч (этап 6).
+    var at = $('fm-at') ? readClock($('fm-at').value) : null, later = $('fm-later') ? readClock($('fm-later').value) : null;
+    if (at !== null) fm.at = at; else if ($('fm-at') && $('fm-at').value) badClock($('fm-at').value);
+    if ($('fm-delay')) fm.delayMin = Math.round(window.MilkLimits.num($('fm-delay').value, 1, 600, 1));
     if ($('fm-stop')) fm.orderId = +$('fm-stop').value;
-    if ($('fm-later') && $('fm-later').value) fm.laterAt = parseClock($('fm-later').value);
+    if (later !== null) fm.laterAt = later; else if ($('fm-later') && $('fm-later').value) badClock($('fm-later').value);
   }
   function runIncident() {
     readIncident();
@@ -743,7 +744,10 @@
     if (remoteStructure) { buildOrders(); remoteStructure = false; }
     if (!remoteData) { render(false); return; }
     remoteData = false;
-    if (draft) showDraft('изменено на другом экране, жду новый план…');
+    // План здесь не перерисовываем: правки с другого экрана приходят пачками (сброс, «обычный день» — сотни строк),
+    // и перерисовка после каждой пачки показывала бы недосчитанные числа, которые прыгают. Таблица заказов уже
+    // обновлена построчно; план и числа сменятся один раз, когда придёт черновик того экрана.
+    if (draft) setStatus('изменено на другом экране, жду новый план…');
     // Если тот экран не пришлёт план за 8 секунд, считаем сами.
     clearTimeout(fallbackTimer);
     fallbackTimer = setTimeout(recalc, 8000);
@@ -816,14 +820,44 @@
     $('qr-overlay').hidden = false; $('qr-close').focus();
   }
 
+  // ---------- странный ввод (этап 6) ----------
+  // Жюри может ввести что угодно. Число за границами (−5, 1e999) поправляем до ближайшей границы и говорим об этом;
+  // пустое поле или не число — оставляем прежнее значение. Границы — MILK_LIMITS в js/settings.js.
+  // Возвращает число или null (тогда поле возвращается к прежнему значению).
+  function fitNumber(key, raw, what, empty) {
+    var lim = window.MILK_LIMITS[key], text = String(raw == null ? '' : raw).trim().replace(',', '.');
+    if (text === '' && empty !== undefined) return empty;
+    var x = text === '' ? NaN : +text;
+    var v = x === Infinity ? lim[1] : (x === -Infinity ? lim[0] : window.MilkLimits.num(x, lim[0], lim[1], NaN));   // 1e999 — «очень много»
+    function show(n) { return String(n).replace('.', ','); }
+    if (isNaN(v)) { toast(what + ': нужно число от ' + show(lim[0]) + ' до ' + show(lim[1]) + '. Оставлено прежнее значение.', 'warn'); return null; }
+    if (v !== x) toast(what + ': можно от ' + show(lim[0]) + ' до ' + show(lim[1]) + ', поставлено ' + show(v) + '.', 'warn');
+    return v;
+  }
+  // Время «ЧЧ:ММ» от 00:00 до 23:59. «25:00» и пустое — null: такого времени не бывает.
+  function readClock(text) {
+    var m = /^\s*(\d{1,2})[:.](\d{2})/.exec(String(text == null ? '' : text));
+    if (!m || +m[1] > 23 || +m[2] > 59) return null;
+    return +m[1] * 60 + +m[2];
+  }
+  function badClock(text) { toast('Такого времени не бывает: «' + (text || 'пусто') + '». Оставлено прежнее.', 'warn'); }
+
   // ---------- события на странице ----------
   function bind() {
     $('orders-table').addEventListener('change', function (e) {
       if (busy()) return;
       var tr = e.target.closest('tr'), o = tr && orderById(+tr.getAttribute('data-id'));
       if (!o) return;
-      if (e.target.classList.contains('kg')) { o.kg = Math.max(0, +e.target.value || 0); tr.classList.toggle('off', o.kg === 0); }
-      if (e.target.classList.contains('tm')) o.from = parseClock(e.target.value);
+      if (e.target.classList.contains('kg')) {
+        var kg = fitNumber('orderKg', e.target.value, 'Вес заказа, кг', 0);     // пусто — 0 кг, заказ отменён
+        if (kg === null) { e.target.value = o.kg; return; }
+        o.kg = Math.round(kg); e.target.value = o.kg; tr.classList.toggle('off', o.kg === 0);
+      }
+      if (e.target.classList.contains('tm')) {
+        var t = readClock(e.target.value);
+        if (t === null) { badClock(e.target.value); e.target.value = clock(o.from); return; }
+        o.from = t;
+      }
       Store.saveOrder(o); saveLocal(); schedule();
     });
     $('orders-table').addEventListener('click', function (e) {
@@ -838,7 +872,11 @@
       var v = vehicleById(+e.target.getAttribute('data-id'));
       if (!v) return;
       if (e.target.classList.contains('veh-on')) v.active = e.target.checked;
-      if (e.target.classList.contains('veh-cap')) v.cap = Math.max(0, +e.target.value || 0);
+      if (e.target.classList.contains('veh-cap')) {
+        var cap = fitNumber('vehicleCap', e.target.value, 'Вместимость, кг');
+        if (cap === null) { e.target.value = v.cap; return; }
+        v.cap = Math.round(cap); e.target.value = v.cap;
+      }
       Store.saveVehicle(v); saveLocal(); schedule();
     });
     $('btn-add-vehicle').addEventListener('click', function () {
@@ -854,9 +892,17 @@
       else if (CHOICES[key]) {                    // список: берём только известное значение, иначе — по умолчанию
         var ok = CHOICES[key].some(function (c) { return c[0] === e.target.value; });
         state.settings[key] = ok ? e.target.value : DEFAULTS[key];
-      } else if (e.target.type === 'time') state.settings[key] = parseClock(e.target.value);
-      else state.settings[key] = Math.max(0, +e.target.value || 0);
-      Store.saveSettings(state.settings); saveLocal(); schedule();
+      } else if (e.target.type === 'time') {
+        var t = readClock(e.target.value);
+        if (t === null) { badClock(e.target.value); e.target.value = clock(state.settings[key]); return; }
+        state.settings[key] = t;
+      } else {
+        var label = (FIELDS.filter(function (f) { return f[0] === key; })[0] || [0, key])[1];
+        var v = window.MILK_LIMITS[key] ? fitNumber(key, e.target.value, label) : Math.max(0, +e.target.value || 0);
+        if (v === null) { e.target.value = state.settings[key]; return; }
+        state.settings[key] = v; e.target.value = v;
+      }
+      Store.saveSettings(state.settings, [key]); saveLocal(); schedule();
     });
     $('settings-form').addEventListener('submit', function (e) { e.preventDefault(); });
     $('routes').addEventListener('click', function (e) {
@@ -949,20 +995,28 @@
     proposal = null;
     setStatus('Сбрасываю…');
     // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.
-    if (!Store.isOnline()) {
+    function resetHere(message) {          // без базы: сбрасываем только этот экран, из файлов проекта
       state = fresh(); draft = baseDraft(); approved = null; events = [];
-      buildOrders(); buildSettings(); $('order-search').value = '';
+      buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
       if (draft) { showDraft('демо сброшено: эталонный план'); saveLocal(); } else solveAndShare();
-      return;
+      if (message) toast(message, 'warn');
     }
-    Store.reset().then(function () { return Store.load(); }).then(function (data) {
-      if (!data) return;
+    if (!Store.hasServer()) return resetHere();       // сайт с самого начала работает без базы
+    Store.reset().then(function (done) { return done ? Store.load() : null; }).then(function (data) {
+      // Связь с базой пропала посреди показа: сброс в базе не прошёл. Экран всё равно возвращаем к исходным
+      // данным и эталону, чтобы показ продолжался, и честно говорим, что другие экраны этого не увидят.
+      if (!data) {
+        setConn('Без сервера: правки видны только здесь', 'warn');
+        return resetHere('Нет связи с базой: демо сброшено только на этом экране. Когда связь вернётся, нажмите «Сбросить демо» ещё раз.');
+      }
       state = { orders: data.orders, vehicles: data.vehicles, settings: Object.assign(clone(DEFAULTS), data.settings || {}) };
       draft = data.draft; approved = null; events = data.events; roads = data.roads || roads;
       clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false; remoteStructure = false;
       buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
       if (draft) showDraft('демо сброшено: эталонный план'); else solveAndShare();   // эталона в базе нет — считаем
       toast('Демо сброшено: исходные заказы и машины, эталонный план, не утверждён');
+      setConn('Онлайн', 'good');
+      Store.subscribe(remote);              // если экран открывали без связи, теперь он начинает получать чужие правки
     });
   }
 

@@ -39,7 +39,10 @@
       sb.from('app_settings').select('*').eq('id', 1).maybeSingle(),
       sb.from('plans').select('*'),
       sb.from('driver_events').select('*').order('created_at', { ascending: true }).limit(1000),
-      sb.from('road_matrix').select('keys,km10,min10').eq('id', 1).maybeSingle()
+      // Таблица дорог — самая тяжёлая часть загрузки (сотни килобайт). На экране диспетчера её копия уже
+      // загружена файлом js/roads.js (сверено с базой 15 ноября: те же 191 точка и те же числа), поэтому
+      // при плохом Wi-Fi не тянем её второй раз. Странице водителя файл не нужен — ей таблица идёт из базы.
+      window.MILK_ROADS ? Promise.resolve({ data: null }) : sb.from('road_matrix').select('keys,km10,min10').eq('id', 1).maybeSingle()
     ]), 12000).then(function (res) {
       var orders = check(res[0]), vehicles = check(res[1]), settings = check(res[2]), plans = check(res[3]), events = check(res[4]);
       online = true;
@@ -102,20 +105,69 @@
   function saveVehicle(v) {
     return run(function () { return sb.from('vehicles').upsert({ id: v.id, name: v.name, cap: v.cap, active: v.active !== false, updated_at: now() }); });
   }
-  function saveSettings(data) { return run(function () { return sb.from('app_settings').upsert({ id: 1, data: data, updated_at: now() }); }); }
+  // keys — какие правила поменялись. В базу уходят только они (функция patch_settings дописывает их к остальным),
+  // поэтому два экрана, поменявшие разные правила одновременно, не затирают друг друга (этап 6).
+  // Если функции в базе нет (старая база), пишем все правила целиком, как раньше.
+  function saveSettings(data, keys) {
+    var patch = {};
+    (keys || Object.keys(data || {})).forEach(function (k) { if (data && k in data) patch[k] = data[k]; });
+    return run(function () {
+      return sb.rpc('patch_settings', { patch: patch }).then(function (res) {
+        if (!res.error) return res;
+        console.warn('patch_settings недоступна, пишу правила целиком:', res.error.message);
+        return sb.from('app_settings').upsert({ id: 1, data: data, updated_at: now() });
+      });
+    });
+  }
+  // ДВА ЭКРАНА ПРАВЯТ ОДНОВРЕМЕННО (этап 6). Каждый экран, поправив данные, сам считает план и сохраняет черновик.
+  // Если два экрана сохранили черновик почти одновременно, в базе остаётся тот, что записан последним.
+  // Чтобы оба экрана показали именно его, пользуемся тем, что база рассылает изменения строго в порядке записи:
+  // пока наш черновик не вернулся к нам эхом, всё чужое, что приходит, записано РАНЬШЕ нашего — его пропускаем.
+  // Наш черновик — последний, и другие экраны его получат. Пришло эхо — снова принимаем чужие.
+  // Метка rev в summary узнаёт своё эхо. Если эхо не пришло за 15 секунд (связь пропала) или запись не прошла,
+  // ожидание снимается, чтобы экран не застрял.
+  var revCount = 0, waiting = {};
   function savePlan(kind, assignment, summary) {
-    return run(function () { return sb.from('plans').upsert({ id: kind, assignment: assignment, summary: summary || {}, author: clientId, updated_at: now() }); });
+    if (!online) return Promise.resolve(null);
+    var rev = clientId + '-' + (++revCount);
+    waiting[kind] = { rev: rev, until: Date.now() + 15000 };
+    return sb.from('plans').upsert({ id: kind, assignment: assignment, summary: Object.assign({}, summary || {}, { rev: rev }), author: clientId, updated_at: now() })
+      .then(check).then(function () { return true; }).catch(function (e) {
+        if (waiting[kind] && waiting[kind].rev === rev) delete waiting[kind];
+        console.warn('Не удалось сохранить план:', e && e.message);
+        if (Store.onError) Store.onError(e);
+        return null;
+      });
+  }
+  // true — чужой план надо пропустить: он записан раньше нашего, а наш ещё в пути.
+  function olderThanMine(row) {
+    var w = waiting[row.id];
+    if (row.author === clientId) {            // наше же эхо: дальше принимаем чужие планы
+      if (w && row.summary && row.summary.rev === w.rev) delete waiting[row.id];
+      return true;                            // своё эхо на экране не показываем (план и так наш)
+    }
+    if (w && Date.now() < w.until) return true;
+    if (w) delete waiting[row.id];
+    return false;
   }
   function addEvent(e) {
     return run(function () { return sb.from('driver_events').insert({ vehicle_id: e.vehicleId, order_id: e.orderId || null, kind: e.kind, note: e.note || null }).select(); })
       .then(function (rows) { return rows && rows[0] ? eventFromRow(rows[0]) : null; });
   }
-  function reset() { return run(function () { return sb.rpc('reset_demo'); }); }
+  // Сброс пробуем, даже если связь пропадала (online = false): так «Сбросить демо» после возвращения сети
+  // снова работает с базой. Ждём не дольше 15 секунд; ошибка — null, экран тогда сбрасывает только себя.
+  function reset() {
+    if (!sb) return Promise.resolve(null);
+    return withTimeout(sb.rpc('reset_demo'), 15000).then(check).then(function () { return true; })
+      .catch(function (e) { console.warn('Сброс в базе не прошёл:', e && e.message); return null; });
+  }
 
   // ---------- подписка на изменения с других экранов ----------
   // handlers: { order(row|null, oldId), vehicle(row|null, oldId), settings(data), plan(kind, plan|null), event(ev|null), status(text) }
+  var subscribed = false;
   function subscribe(handlers) {
-    if (!online) return;
+    if (!online || subscribed) return;      // повторный вызов (после сброса, когда связь вернулась) ничего не дублирует
+    subscribed = true;
     function on(table, fn) {
       return function (p) { try { fn(p); } catch (e) { console.error(e); } };
     }
@@ -131,7 +183,7 @@
       }))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plans' }, on('plans', function (p) {
         if (p.eventType === 'DELETE') handlers.plan(p.old && p.old.id, null);
-        else if (p.new.author !== clientId) handlers.plan(p.new.id, planFromRow(p.new));
+        else if (!olderThanMine(p.new)) handlers.plan(p.new.id, planFromRow(p.new));
       }))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_events' }, on('driver_events', function (p) {
         handlers.event(p.eventType === 'DELETE' ? null : eventFromRow(p.new));
@@ -144,7 +196,7 @@
     saveDraft: function (a, s) { return savePlan('draft', a, s); },
     approve: function (a, s) { return savePlan('approved', a, s); },
     addEvent: addEvent, reset: reset, onError: null,
-    isOnline: function () { return online; }, clientId: clientId
+    isOnline: function () { return online; }, hasServer: function () { return !!sb; }, clientId: clientId
   };
   window.MilkStore = Store;
 })();

@@ -526,6 +526,9 @@
   }
 
   function prepare(input, live) {
+    // Странные числа (бесконечность, «abc», отрицательный вес) поправляем по границам из js/settings.js (этап 6):
+    // расчёт не должен падать, что бы ни пришло из базы или с другого экрана. На обычных данных ничего не меняется.
+    if (typeof window !== 'undefined' && window.MilkLimits) input = window.MilkLimits.input(input);
     var st = input.settings;
     var stops = buildStops(input.orders, st);
     var vehicles = input.vehicles.filter(function (v) { return v.active !== false && v.cap > 0; });
@@ -701,7 +704,8 @@
     if (P.live) Object.keys(P.dropped).forEach(function (i) { used[i] = true; });
     var routes = P.vehicles.map(function () { return []; });
     var moved = move && stopOf[move.orderId] !== undefined ? stopOf[move.orderId] : -1;
-    (assignment || []).forEach(function (a) {
+    (Array.isArray(assignment) ? assignment : []).forEach(function (a) {
+      if (!a || !Array.isArray(a.s)) return;                // испорченная строка записи (этап 6): пропускаем
       if (a.v === NOT_TODAY) {                              // строка «не везём сегодня» (см. toAssignment)
         (a.s || []).forEach(function (oid) {
           var i = stopOf[oid];
