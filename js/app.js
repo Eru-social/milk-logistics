@@ -68,7 +68,7 @@
   // Снимок дня: он есть у плана, который перестраивали, когда машины уже в рейсе (см. js/replan.js).
   // У плана из базы снимок лежит внутри summary.
   function liveOf(p) { return p ? (p.live || (p.summary && p.summary.live) || null) : null; }
-  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length, byRoad: !!p.byRoad, live: p.live || null }; }
+  function summaryOf(p) { return { km: Math.round(p.km), used: p.used, problems: p.problems.length, dropped: (p.dropped || []).length, byRoad: !!p.byRoad, live: p.live || null }; }
   // Показанный план становится общим черновиком: его видят все экраны диспетчера.
   function shareDraft() {
     draft = { assignment: window.MilkSolver.toAssignment(plans.best), live: plans.best.live || null, at: new Date().toISOString() };
@@ -88,7 +88,9 @@
     if (b.leftover) return p;
     if (inp.settings.fleetPriority !== 'overtime' && b.used > p.used) return p;
     if (b.problems.length < p.problems.length || (b.problems.length === p.problems.length && b.km < p.km - 0.05)) {
-      b.ms = p.ms; b.fromBase = true; return b;
+      b.ms = p.ms; b.fromBase = true;
+      if (p.calm && b.problems.length) b.calm = p.calm;   // вариант «без нарушений» посчитан на тех же данных — он остаётся
+      return b;
     }
     return p;
   }
@@ -96,7 +98,10 @@
   // Сначала по весу выбирается число машин (js/fleet.js), потом решатель строит маршруты для них.
   function solveAndShare() {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
+    var hadDropped = plans.best && !plans.best.live && plans.best.dropped && plans.best.dropped.length;
     plans.best = notWorseThanBase(window.MilkFleet.solve(input()));
+    // Список «не везём» выбирал логист в предложении (этап 3). Расчёт с нуля везёт всё — говорим об этом прямо.
+    if (hadDropped) toast('План построен заново и везёт всё: список «не везём сегодня» снят. Вариант «без нарушений» — снова через предложение.', 'warn');
     plans.naive = window.MilkSolver.naive(input());
     shareDraft();
     selected = -1;
@@ -318,13 +323,18 @@
       }
       html += '</div>';
     });
-    if (live && p.dropped.length) {
-      html += '<div class="dropped"><b>Сегодня не доставим</b><ul>';
+    // «Сегодня не доставим»: в идущем дне — после перестроения; до начала дня — вариант «без нарушений» (этап 3).
+    // До начала дня груз ещё на заводе, поэтому любую точку можно вернуть машине; в идущем дне — только груз из сломанной машины.
+    if (p.dropped && p.dropped.length) {
+      var dkg = 0;
+      p.dropped.forEach(function (si) { dkg += p.stops[si].kg; });
+      html += '<div class="dropped"><b>Сегодня не доставим: ' + plural(p.dropped.length, 'точка', 'точки', 'точек') + ', ' + num(dkg) + ' кг</b>' +
+        (live ? '' : '<p>Так всё остальное без нарушений. Груз остаётся на заводе; точку можно вернуть машине — пробег и нарушения пересчитаются.</p>') + '<ul>';
       p.dropped.forEach(function (si) {
-        var s = p.stops[si], oid = s.orders[0].id;
+        var s = p.stops[si], oid = s.orders[0].id, canGive = view === 'best' && (!live || from[oid] !== undefined);
         html += '<li>' + (s.important ? '★ ' : '') + esc(stopTitle(s)) + '<br><span>' + esc(s.address) + ' · ' + num(s.kg) + ' кг' +
-          (from[oid] !== undefined ? ' · груз в сломанной машине' : ' · груз вернётся на завод') + '</span>' +
-          (view === 'best' && from[oid] !== undefined ? moveSelect(oid, 0, 'Всё-таки отдать машине', broken) : '') + '</li>';
+          (!live ? ' · груз остаётся на заводе' : (from[oid] !== undefined ? ' · груз в сломанной машине' : ' · груз вернётся на завод')) + '</span>' +
+          (canGive ? moveSelect(oid, 0, 'Всё-таки отдать машине', broken) : '') + '</li>';
       });
       html += '</ul></div>';
     }
@@ -420,6 +430,16 @@
 
   // Логист переносит остановку в другую машину. Остальное не трогаем, только пересчитываем время.
   function moveStop(orderId, vehicleId) {
+    // Пока открыто предложение, перенос меняет показанный вариант предложения, а не общий план (в базу ничего не уходит).
+    if (proposal && proposal.ok) {
+      var was = proposal.plan.km;
+      window.MilkProposal.move(proposal, orderId, vehicleId);
+      render(false);
+      var dk = proposal.plan.km - was;
+      toast('В предложении точка отдана машине ' + vehicleId + '. Пробег ' + (dk >= 0 ? '+' : '−') + num(Math.abs(dk), 1) + ' км. В общий план — по «Применить».',
+        proposal.plan.problems.length ? 'warn' : '');
+      return;
+    }
     var before = plans.best.km, live = plans.best.live ? clone(plans.best.live) : null, o = orderById(orderId);
     if (live) {                            // правка поверх перестроения; точка могла быть в списке «не доставим»
       live.dropped = (live.dropped || []).filter(function (x) { return x !== orderId; });
@@ -595,7 +615,7 @@
     return vid;
   }
   function openProposal(list) {
-    var opts = { solve: function (inp) { return notWorseThanBase(window.MilkFleet.solve(inp), inp); } };
+    var opts = { solve: function (inp, o) { return notWorseThanBase(window.MilkFleet.solve(inp, o), inp); } };
     if (approved) { opts.base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)); opts.marks = eventIndex().byStop; }
     setStatus('Считаю предложение…');
     proposal = window.MilkProposal.make({ input: input(), plan: plans.best, naive: plans.naive }, list, opts);
@@ -872,6 +892,8 @@
       if (b && b.hasAttribute('data-whatif')) whatIfKey(b.getAttribute('data-whatif'));
     });
     $('proposal').addEventListener('click', function (e) {
+      var vb = e.target.closest && e.target.closest('[data-variant]');
+      if (vb && proposal) { window.MilkProposal.choose(proposal, +vb.getAttribute('data-variant')); selected = -1; render(true); return; }
       if (e.target.id === 'prop-apply') applyProposal();
       if (e.target.id === 'prop-cancel') { dropProposal(); toast('Предложение отменено: показан прежний план, в базе ничего не менялось.'); }
     });

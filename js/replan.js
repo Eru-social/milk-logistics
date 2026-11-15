@@ -73,6 +73,8 @@
     var old = plan.live || {};
     var live = { id: Math.round(T) + '-' + Date.now().toString(36), now: T, vehicles: {}, from: copy(old.from), retry: copy(old.retry),
       dropped: (old.dropped || []).slice(), moved: copy(old.moved), log: (old.log || []).slice(-4) };
+    // Точки, которые не везём ещё с утра (вариант «без нарушений», этап 3), в идущем дне тоже остаются «не сегодня».
+    (plan.dropped || []).forEach(function (stop) { var oid = oidOf(plan, stop); if (live.dropped.indexOf(oid) < 0) live.dropped.push(oid); });
     plan.routes.forEach(function (r) {
       var id = r.vehicle.id;
       if (r.broken) { live.vehicles[id] = copy(old.vehicles[id]); cuts[id] = r.seq.length; return; }

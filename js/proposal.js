@@ -7,7 +7,8 @@
 //   make(...)    — посчитать предложение (в базу ничего не пишет);
 //   save(...)    — записать в базу то, чем новые данные отличаются от прежних (вызывается по «Применить»);
 //   goals(...)   — четыре цели заказчика для любого плана; tiles(...) — верхняя строка экрана;
-//   card(...)    — карточка предложения; whatIf(...) и scenario(...) — пять кнопок «а если».
+//   card(...)    — карточка предложения; whatIf(...) и scenario(...) — пять кнопок «а если»;
+//   choose(...)  — какой из двух вариантов показан (этап 3: «везём всё» и «без нарушений, но не всё»).
 // Экран (js/app.js) только вызывает эти функции и вешает кнопки.
 (function () {
   'use strict';
@@ -50,7 +51,7 @@
       fleet: { used: plan.used, active: active, avgLoad: plan.used ? loadSum / plan.used : 0, garage: Math.max(0, active - plan.used), minLoad: st.minLoadPct },
       window: { onTime: onTime, important: important, longest: longest, overtime: plan.overtimeMin, overtimeVehicles: overVeh, shiftMin: st.shiftMin,
         tol: st.overtimeToleranceMin || 0 },
-      dropped: (plan.dropped || []).length,
+      dropped: (plan.dropped || []).length, droppedKg: plan.droppedKg || 0,
       problems: plan.problems.length
     };
   }
@@ -103,14 +104,40 @@
         data = cur.input; plan = v.plan; live = v; lines = lines.concat(v.lines);
       } else {
         data = C.apply(cur.input, chk.list);
-        plan = (opts.solve || F().solve)(data);
+        // allowDrop: если всё довезти без нарушений нельзя, решатель посчитает и вариант «без нарушений» (этап 3).
+        plan = (opts.solve || F().solve)(data, { allowDrop: true });
       }
       naive = S.naive(data);
     } catch (e) {
       return { ok: false, errors: ['Не получилось посчитать предложение: ' + e.message], list: chk.list, lines: lines };
     }
-    return { ok: true, errors: [], list: chk.list, lines: lines, data: data, plan: plan, naive: naive, live: live, ms: Date.now() - started,
-      before: goals(cur.plan, cur.input, cur.naive), after: goals(plan, data, naive) };
+    var p = { ok: true, errors: [], list: chk.list, lines: lines, data: data, plan: plan, naive: naive, live: live, ms: Date.now() - started,
+      before: goals(cur.plan, cur.input, cur.naive), after: goals(plan, data, naive), variants: null, pick: 0 };
+    // Этап 3, решение 6: всё довезти без нарушений нельзя (например, «минус 4 машины» в день максимальной загрузки) —
+    // логист выбирает из двух вариантов: «везём всё» (нарушения видны) или «без нарушений» (часть точек — не сегодня).
+    if (plan.calm) {
+      p.variants = [
+        { key: 'all', name: 'Везём всё', plan: plan, after: p.after },
+        { key: 'calm', name: 'Без нарушений', plan: plan.calm, after: goals(plan.calm, data, naive) }
+      ];
+      delete plan.calm;                       // дальше варианты живут отдельно: в базу уходит только выбранный
+    }
+    return p;
+  }
+  // Показать вариант n (0 — «везём всё», 1 — «без нарушений»): на карте, в маршрутах, в «было → станет» и по «Применить».
+  function choose(p, n) {
+    if (!p || !p.variants || !p.variants[n]) return p;
+    p.pick = n; p.plan = p.variants[n].plan; p.after = p.variants[n].after;
+    return p;
+  }
+  // Логист вручную вернул точку из «не везём» машине (или перенёс точку), пока предложение открыто:
+  // пересчитываем только время показанного варианта, ничего не переставляя (как перенос в общем плане).
+  function move(p, orderId, vehicleId) {
+    var plan = S.fromAssignment(p.data, S.toAssignment(p.plan), { orderId: orderId, vehicleId: vehicleId });
+    var after = goals(plan, p.data, p.naive);
+    if (p.variants) { p.variants[p.pick].plan = plan; p.variants[p.pick].after = after; }
+    p.plan = plan; p.after = after;
+    return p;
   }
 
   // ---------- «Применить»: запись в базу ----------
@@ -146,7 +173,7 @@
       ['Суммарный пробег', num(g.km.km) + ' км'],
       ['Количество транспорта', g.fleet.used + ' из ' + g.fleet.active + ', загрузка ' + num(g.fleet.avgLoad) + '%'],
       ['Окно доставки', w.onTime + ' из ' + w.important + ' вовремя; смена до ' + hours(w.longest) + (w.overtime > 0.5 ? ', переработка ' + hours(w.overtime) : ', без переработки')],
-      ['Не везём сегодня', plural(g.dropped, 'точка', 'точки', 'точек')],
+      ['Не везём сегодня', plural(g.dropped, 'точка', 'точки', 'точек') + (g.dropped ? ', ' + num(g.droppedKg) + ' кг' : '')],
       ['Нарушений правил', String(g.problems)]
     ];
   }
@@ -159,16 +186,49 @@
         '<div class="proposal-actions"><button type="button" class="btn" id="prop-cancel">Закрыть</button></div></div>';
       return html;
     }
+    if (p.variants) html += variantsBlock(p);
     var a = goalRows(p.before), b = goalRows(p.after);
     html += '<table class="proposal-goals"><thead><tr><th>Цель заказчика</th><th>Было</th><th>Станет</th></tr></thead><tbody>';
     a.forEach(function (row, i) {
       html += '<tr' + (row[1] !== b[i][1] ? ' class="changed"' : '') + '><th>' + row[0] + '</th><td>' + esc(row[1]) + '</td><td>' + esc(b[i][1]) + '</td></tr>';
     });
-    html += '</tbody></table><p class="proposal-note">На карте и в маршрутах — предложенный план. Водители и другие экраны его не видят, ' +
+    html += '</tbody></table>' + droppedBlock(p.plan) + '<p class="proposal-note">На карте и в маршрутах — предложенный план. Водители и другие экраны его не видят, ' +
       'пока вы не нажмёте «Применить». Таблицы слева пока закрыты для правки.</p>' +
       '<div class="proposal-actions"><button type="button" class="btn primary" id="prop-apply">Применить</button>' +
       '<button type="button" class="btn" id="prop-cancel">Отменить</button></div></div>';
     return html;
+  }
+
+  // Этап 3: два варианта, когда всё довезти без нарушений нельзя. Кнопка — какой показать; «Применить» берёт показанный.
+  function variantsBlock(p) {
+    var html = '<p class="proposal-note">Всё довезти без нарушений не получается. Два варианта — выберите, какой показать:</p><div class="variants">';
+    p.variants.forEach(function (v, n) {
+      var g = v.after, sub = v.key === 'calm' ?
+        'нарушений нет; не везём ' + plural(g.dropped, 'точку', 'точки', 'точек') + ', ' + num(g.droppedKg) + ' кг' :
+        'всё в маршрутах; нарушений: ' + g.problems + (g.window.overtime > 0.5 ? ', переработка ' + hours(g.window.overtime) : '');
+      html += '<button type="button" class="variant' + (n === p.pick ? ' on' : '') + '" data-variant="' + n + '" aria-pressed="' + (n === p.pick) + '">' +
+        '<b>' + esc(v.name) + '</b><span>' + esc(sub) + '</span></button>';
+    });
+    html += '</div>';
+    if (p.variants[0].plan.problems.length) {                // что именно нарушает «везём всё»: первые строки «Что не сходится»
+      var pr = p.variants[0].plan.problems;
+      html += '<p class="proposal-note">«Везём всё»: ' + esc(pr.slice(0, 3).join('; ')) + (pr.length > 3 ? ' и ещё ' + (pr.length - 3) : '') + '.</p>';
+    }
+    return html;
+  }
+  // Список «не везём сегодня» в карточке: самые тяжёлые сверху, весь список — под маршрутами.
+  function droppedBlock(plan) {
+    var list = (plan.dropped || []).slice();
+    if (!list.length || plan.live) return '';
+    list.sort(function (a, b) { return plan.stops[b].kg - plan.stops[a].kg; });
+    var imp = list.filter(function (i) { return plan.stops[i].important; }).length;
+    return '<div class="proposal-dropped"><b>Не везём сегодня: ' + plural(list.length, 'точка', 'точки', 'точек') + ', ' + num(plan.droppedKg) + ' кг' +
+      (imp ? ', из них важных ★ ' + imp : '') + '</b><ul>' +
+      list.slice(0, 5).map(function (i) {
+        var s = plan.stops[i];
+        return '<li>' + (s.important ? '★ ' : '') + esc(s.orders.map(function (o) { return o.name; }).join(' + ')) + ' — ' + num(s.kg) + ' кг</li>';
+      }).join('') + (list.length > 5 ? '<li>и ещё ' + (list.length - 5) + ' — весь список под маршрутами</li>' : '') + '</ul>' +
+      '<p class="proposal-note">Груз остаётся на заводе. Точку можно вернуть машине: в списке под маршрутами, «Всё-таки отдать машине».</p></div>';
   }
 
   // ---------- пять кнопок «а если» ----------
@@ -209,7 +269,7 @@
       '</div></div>';
   }
 
-  var api = { make: make, save: save, goals: goals, tiles: tiles, card: card, whatIf: whatIf, scenario: scenario, leastLoaded: leastLoaded, KEYS: KEYS };
+  var api = { make: make, choose: choose, move: move, save: save, goals: goals, tiles: tiles, card: card, whatIf: whatIf, scenario: scenario, leastLoaded: leastLoaded, KEYS: KEYS };
   if (typeof window !== 'undefined') window.MilkProposal = api;
   if (node) module.exports = api;
 })();

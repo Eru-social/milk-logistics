@@ -149,14 +149,18 @@
     if (input.settings.fleetPriority === 'overtime') {    // прежнее поведение: решатель сам решает, сколько машин
       plan = S.solve(input, opts);
       plan.fleet = { mode: 'overtime', need: 0, added: 0, tries: 1 };
+      if (plan.calm) plan.calm.fleet = plan.fleet;
       return plan;
     }
     var pick = choose(input);
     if (pick.all) {
       // Нужны все машины (как в день максимальной загрузки), груз не влезает или машин нет —
       // решатель считает ровно как раньше, с тем же запасом времени. Поэтому эталонный план не меняется.
+      // Если и так остались нарушения, решатель (при opts.allowDrop) сам посчитает второй вариант — «без нарушений,
+      // но не всё» (plan.calm, этап 3): машин в гараже нет, взять их неоткуда.
       plan = S.solve(input, opts);
       plan.fleet = { mode: 'fewer', need: pick.vehicles.length, added: 0, tries: 1 };
+      if (plan.calm) plan.calm.fleet = plan.fleet;
       return plan;
     }
     var chosen = pick.vehicles, added = 0, tries = 0;
@@ -165,7 +169,9 @@
       // Пока можно добавить машину, оставляем четверть времени про запас на повтор.
       // Если повтор понадобился, а время почти вышло, он всё равно получает MIN_TRY_MS: перегруз хуже лишней десятой секунды.
       var share = Math.max(MIN_TRY_MS, canAdd ? left * FIRST_SHARE : left);
-      var part = S.solve(Object.assign({}, input, { vehicles: chosen }), Object.assign({}, opts, { timeMs: share }));
+      // Варианта «не везём» здесь нет (allowDrop: false): в гараже есть машины, и второй вариант при переработке —
+      // «больше машин, без переработки» (решение 19), а не оставить точки без товара.
+      var part = S.solve(Object.assign({}, input, { vehicles: chosen }), Object.assign({}, opts, { timeMs: share, allowDrop: false }));
       tries++;
       // Переносим план на весь парк: невыбранные машины получают пустой маршрут. Числа не меняются:
       // время и вес каждой машины считаются отдельно от других.
@@ -213,6 +219,9 @@
       if (used > need) text += ' По весу хватило бы ' + plural(need, 'машины', 'машин', 'машин') + ', но тогда груз не раскладывается без перегруза.';
       else if (used < need) text += ' По весу нужно ' + need + ', поэтому где-то перегруз.';   // бывает после ручного переноса точек
       text += garageText;
+    }
+    if (!plan.live && plan.dropped && plan.dropped.length) {   // вариант «без нарушений» (этап 3): часть груза сегодня остаётся на заводе
+      text += ' Сегодня не везём ' + plural(plan.dropped.length, 'точку', 'точки', 'точек') + ' (' + tons(plan.droppedKg || 0) + '): список под маршрутами.';
     }
     if (pick.noSmall) text += ' Есть заказы в центре, а малой машины (до ' + tons(st.centerMaxCap) + ') на линии нет: туда поедет большая, это нарушение.';
     // Подсказка про второй вариант нужна, только если машины не укладываются в смену, а в гараже есть кем помочь.

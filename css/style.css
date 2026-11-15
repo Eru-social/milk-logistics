@@ -253,6 +253,18 @@ button, input { font: inherit; color: inherit; }
 .proposal-goals tr.changed td:last-child { font-weight: 600; color: var(--accent); }
 .proposal-note { margin: 0; color: var(--muted); font-size: 12.5px; }
 .proposal-actions { display: flex; gap: 8px; }
+/* Этап 3: два варианта предложения («везём всё» / «без нарушений») и список «не везём сегодня» */
+.variants { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.variant { display: grid; gap: 2px; text-align: left; font: inherit; font-size: 12.5px; padding: 6px 8px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.variant span { color: var(--muted); }
+.variant:hover { border-color: var(--accent); }
+.variant.on { border: 2px solid var(--accent); padding: 5px 7px; }
+.variant.on b { color: var(--accent); }
+.proposal-dropped { border: 1px solid var(--bad); border-radius: 8px; padding: 6px 8px; background: var(--surface); }
+.proposal-dropped b { color: var(--bad); }
+.proposal-dropped ul { margin: 4px 0; }
+.dropped p { margin: 4px 0 0; color: var(--muted); }
 .map-flag { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); margin: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: 13px; z-index: 5; }
 .map-flag[hidden] { display: none; }
 

@@ -162,5 +162,52 @@ function makeWorld(storage) {
   A.fire('fm-body', 'click', A.btn({ id: 'fm-cancel' }));
   A.fire('btn-reset', 'click'); await A.flush();
 
+  // Этап 3: «минус 4 машины» → два варианта → «без нарушений» → вернуть точку машине → «Применить» → утвердить.
+  console.log('\n«не везём сегодня»:');
+  A.win.fetch = answer([3, 5, 7, 9].map(v => ({ kind: 'vehicle_off', vehicle: v })));
+  await send('У машин 3, 5, 7 и 9 водители заболели');
+  A.fire('assistant', 'click', A.btn({ id: 'as-go' })); await A.flush();
+  if (!/data-variant="1"/.test(text('proposal'))) throw new Error('минус 4 машины: в карточке нет двух вариантов: ' + text('proposal').slice(0, 300));
+  if (/Сегодня не доставим/.test(text('routes'))) throw new Error('вариант «везём всё» показал список «не доставим»');
+  const vb = A.btn({ attrs: { 'data-variant': '1' } }); vb.closest = () => vb;
+  A.fire('proposal', 'click', vb); await A.flush();
+  const dropRoutes = text('routes'), nDrop = (/Сегодня не доставим: (\d+)/.exec(dropRoutes) || [])[1];
+  if (!nDrop || !/Не везём сегодня: /.test(text('proposal'))) throw new Error('вариант «без нарушений»: нет списка «не везём»');
+  if (!/Нарушений правил<\/th><td>[^<]*<\/td><td>0</.test(text('proposal'))) throw new Error('вариант «без нарушений»: в карточке нарушения не ноль');
+  console.log('  «Без нарушений»: не доставим ' + nDrop + ' точ. | ' + (/>([^<]+)<\/p>/.exec(text('fleet-note')) || [])[1].slice(0, 120));
+  // Вернуть точку машине, пока предложение открыто: меняется предложение, а не общий план.
+  let give = /class="move" data-oid="(\d+)" aria-label="Всё-таки отдать машине"/.exec(dropRoutes);
+  if (!give) throw new Error('у точки «не везём» нет «Всё-таки отдать машине»');
+  const sel1 = A.el('mv3'); sel1.classList.contains = c => c === 'move'; sel1.value = '1'; sel1.attrs['data-oid'] = give[1];
+  A.fire('routes', 'change', sel1); await A.flush();
+  const nDrop2 = (/Сегодня не доставим: (\d+)/.exec(text('routes')) || [])[1];
+  if (+nDrop2 !== nDrop - 1 || !/В предложении точка отдана машине 1/.test(A.el('toast').textContent)) throw new Error('вернуть точку в предложении: было ' + nDrop + ', стало ' + nDrop2);
+  A.fire('proposal', 'click', { id: 'prop-apply' }); await A.flush();
+  const saved = JSON.parse(storage['milk.plan.v3']).draft.assignment.filter(a => a.v === 0)[0];
+  if (!saved || saved.s.length !== nDrop - 1) throw new Error('после «Применить» в черновике нет строки «не везём»');
+  console.log('  вернули точку в предложении: ' + nDrop + ' → ' + nDrop2 + '; «Применить»: в черновике «не везём» ' + saved.s.length + ' точ.');
+  // В общем плане до начала дня точку тоже можно вернуть.
+  give = /class="move" data-oid="(\d+)" aria-label="Всё-таки отдать машине"/.exec(text('routes'));
+  const sel2 = A.el('mv4'); sel2.classList.contains = c => c === 'move'; sel2.value = '2'; sel2.attrs['data-oid'] = give[1];
+  A.fire('routes', 'change', sel2); await A.flush();
+  const nDrop3 = (/Сегодня не доставим: (\d+)/.exec(text('routes')) || [])[1];
+  if (+nDrop3 !== nDrop - 2) throw new Error('вернуть точку в общем плане: ' + nDrop3);
+  A.fire('btn-approve', 'click'); await A.flush();
+  const appr = JSON.parse(storage['milk.plan.v3']).approved.assignment.filter(a => a.v === 0)[0];
+  if (!appr || appr.s.length !== nDrop - 2) throw new Error('утверждённый план без строки «не везём»');
+  console.log('  вернули ещё одну в общем плане: ' + nDrop3 + '; утверждено, «не везём» ' + appr.s.length + ' точ.');
+  // Поломка в идущем дне: утренние «не везём» остаются в списке.
+  A.fire('btn-incident', 'click');
+  const fh = A.el('fm-body').innerHTML, fat = /id="fm-at" value="([^"]+)"/.exec(fh);
+  A.el('fm-at').value = fat ? fat[1] : ''; A.fire('fm-body', 'click', A.btn({ id: 'fm-go' }));
+  if (/data-pick/.test(A.el('fm-body').innerHTML)) {
+    A.fire('fm-body', 'click', A.btn({ attrs: { 'data-pick': '0' } }));
+    const nLive = +(/Сегодня не доставим: (\d+)/.exec(text('routes')) || [])[1];
+    if (!(nLive >= nDrop - 2)) throw new Error('после поломки утренние «не везём» пропали: ' + nLive);
+    console.log('  поломка после утверждения: не доставим ' + nLive + ' точ. (с утра ' + (nDrop - 2) + ')');
+  } else { console.log('  поломка: ' + (/fm-error">([^<]+)/.exec(A.el('fm-body').innerHTML) || [])[1]); A.fire('fm-body', 'click', A.btn({ id: 'fm-cancel' })); }
+  A.fire('btn-reset', 'click'); await A.flush();
+  if (/Сегодня не доставим/.test(text('routes'))) throw new Error('после сброса остался список «не доставим»');
+
   console.log('\nЭкран диспетчера: ошибок нет');
 })().catch(e => { console.log('УПАЛО: ' + e.stack); process.exit(1); });

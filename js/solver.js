@@ -8,6 +8,8 @@
 //      пока план становится «дешевле».
 //   4. Встряхиваем: вынимаем кучку соседних остановок и вставляем заново
 //      в лучшие места. Если стало лучше — оставляем.
+//   5. (Этап 3, только по просьбе предложения.) Если нарушения так и остались, считаем второй вариант —
+//      «без нарушений, но не всё»: с воображаемой машиной «не везём» (см. solveCalm).
 //
 // «Цена» плана — это минуты в дороге плюс штрафы за нарушения:
 // перегруз, переработка водителя, опоздание, большая машина в центре.
@@ -25,6 +27,12 @@
   // Два числа для перестроения в течение дня:
   var OVERTIME_SPREAD = 0.2;   // переработку лучше разделить между водителями, чем повесить на одного (штраф растёт как квадрат)
   var PICKUP_WAIT = 0.5;       // за каждую минуту, что груз ждёт перегрузки в сломанной машине: молочка ждать не должна
+  // Три числа для варианта «без нарушений» (этап 3, воображаемая машина «не везём», см. solveCalm):
+  var STRICT = 1e6;            // нарушение в этом варианте: за каждую минуту переработки или опоздания, каждый кг перегруза или недогруза
+  var DROP_STOP = 1e4;         // положить точку в машину «не везём»: дороже любой езды (весь день — около 400 км, ~1 000 минут)…
+  var DROP_IMPORTANT = 4e4;    // …важную (со звёздочкой) — ещё дороже: как пять обычных…
+  var DROP_KG = 5;             // …и тяжёлую тоже: за каждый кг. Но точка всегда дешевле нарушения
+  var NOT_TODAY = 0;           // номер воображаемой машины «не везём» в записи плана (у настоящих машин номера с 1)
 
   // ---------- расстояния ----------
   function haversineKm(a, b) {
@@ -148,11 +156,23 @@
     var cost = drive + WAIT_WEIGHT * wait + st.vehicleFixedMin + st.delayWeight * delay +
       PENALTY_OVERTIME * overtime + PENALTY_LATE * late + PENALTY_OVERLOAD * overload +
       PENALTY_UNDERLOAD * underload + PENALTY_CENTER * center;
+    // Вариант «без нарушений» (P.strict): любое нарушение дороже, чем не везти точку сегодня.
+    // Переработку в пределах допуска нарушением не считаем, перегруз — любой (иначе груз не влезет в машины).
+    if (P.strict) cost += STRICT * (Math.max(0, overtime - Math.max(0.5, st.overtimeToleranceMin || 0)) + late + overload + underload + center);
     return { cost: cost, drive: drive, km: km, wait: wait, late: late, delay: delay, slack: slack, load: load, overload: overload,
       underload: underload, overtime: overtime, center: center, depart: depart, back: back, stops: list };
   }
 
+  // Сколько «стоит» не везти остановку сегодня (машина «не везём», см. solveCalm).
+  function dropCost(s) { return DROP_STOP + (s.important ? DROP_IMPORTANT : 0) + DROP_KG * s.kg; }
+
   function evalRoute(P, veh, seq, withStops) {
+    if (veh.dummy) {                                        // воображаемая машина «не везём»: никуда не ездит, порядок не важен
+      var dc = 0, kg = 0;
+      for (var i = 0; i < seq.length; i++) { dc += dropCost(P.stops[seq[i]]); kg += P.stops[seq[i]].kg; }
+      return { cost: dc, drive: 0, km: 0, wait: 0, late: 0, delay: 0, underload: 0, load: kg, overload: 0, overtime: 0, center: 0,
+        depart: 0, back: 0, stops: [] };
+    }
     if (P.live && seq.length) return evalLive(P, P.vehicles.indexOf(veh), seq, withStops);
     if (!seq.length) return { cost: 0, drive: 0, km: 0, wait: 0, late: 0, delay: 0, underload: 0, load: 0, overload: 0, overtime: 0, center: 0,
       depart: 0, back: 0, stops: [] };
@@ -348,6 +368,8 @@
         tryInsert(b, pos); tryInsert(b, pos + 1);
       });
       for (var b = 0; b < routes.length; b++) if (!routes[b].length) tryInsert(b, 0);
+      // Машина «не везём» (только в варианте «без нарушений») — всегда одно из мест, куда можно переложить точку.
+      if (P.dropAt !== undefined && a !== P.dropAt && routes[P.dropAt].length) tryInsert(P.dropAt, 0);
       if (bestB < 0) return false;
       if (bestB !== a) { routes[a] = without; costs[a] = costWithout; }
       routes[bestB] = bestSeq; costs[bestB] = bestCost; routeOf[v] = bestB;
@@ -373,6 +395,7 @@
     // Разворачиваем кусок маршрута задом наперёд (убирает «петли»).
     function reverse(a) {
       var improved = false, r = routes[a];
+      if (V[a].dummy) return false;                         // у машины «не везём» порядка нет
       for (var i = 0; i < r.length - 1; i++) for (var j = i + 1; j < r.length; j++) {
         var t = r.slice(0, i).concat(r.slice(i, j + 1).reverse(), r.slice(j + 1));
         var ct = c(a, t);
@@ -467,7 +490,9 @@
     var out = { routes: [], km: 0, driveMin: 0, used: 0, overtimeMin: 0, lateStops: 0, overloadKg: 0,
       centerViolations: 0, underloaded: 0, lastBack: 0, workMin: 0, delayMin: 0, firstDepart: 1e9, problems: [] };
     routes.forEach(function (seq, k) {
-      var v = P.vehicles[k], e = evalRoute(P, v, seq, true);
+      var v = P.vehicles[k];
+      if (v.dummy) { out.dropped = seq.slice(); return; }  // машина «не везём»: это не маршрут, а список (finish его разберёт)
+      var e = evalRoute(P, v, seq, true);
       var r = { vehicle: v, seq: seq, km: e.km, driveMin: e.drive, depart: e.depart, back: e.back, load: e.load,
         loadPct: v.cap ? e.load / v.cap * 100 : 0, overtime: e.overtime, overload: e.overload, late: e.late,
         center: e.center, wait: e.wait, stops: e.stops };
@@ -505,7 +530,8 @@
     var stops = buildStops(input.orders, st);
     var vehicles = input.vehicles.filter(function (v) { return v.active !== false && v.cap > 0; });
     var points = [input.depot].concat(stops);
-    var P = { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roads), stopOf: {} };
+    // dropped — остановки, которые сегодня не везём (номер остановки → true): из записи плана или из снимка дня.
+    var P = { st: st, stops: stops, vehicles: vehicles, M: buildMatrix(points, st, input.roads), stopOf: {}, dropped: {} };
     stops.forEach(function (s, i) { s.orders.forEach(function (o) { P.stopOf[o.id] = i; }); });
     if (live) applyLive(P, live);
     return P;
@@ -553,7 +579,79 @@
     PENALTY_OVERLOAD = OVERLOAD_SOFT;
     finish(P, out);
     out.ms = Date.now() - started;
+    // Этап 3: если всё довезти без нарушений не вышло, считаем второй вариант — «без нарушений, но не всё» (out.calm).
+    // Сам план (out) от этого не меняется: на исходных данных нарушений нет, и сюда расчёт не заходит.
+    if (opts.allowDrop && out.problems.length && P.vehicles.length) {
+      out.calm = solveCalm(P, best, near, makeRandom((opts.seed || 12345) + 1), opts.dropMs > 0 ? opts.dropMs : 1500, rounds);
+    }
     return out;
+  }
+
+  // ---------- вариант «без нарушений»: воображаемая машина «не везём» (этап 3, решение 6) ----------
+  // К машинам добавляется ещё одна, воображаемая: она никуда не ездит, а положить в неё точку очень дорого
+  // (dropCost: важную или тяжёлую — ещё дороже). Зато любое нарушение (переработка, опоздание, перегруз,
+  // недогруз, большая машина в центре) в этом расчёте ещё дороже (STRICT). Дальше работает тот же поиск,
+  // что и в обычном расчёте: перенос, обмен, встряхивание. Он сам решит, какие точки не везти, и сам вернёт
+  // точку в маршрут, если для неё освободилось место. Нового алгоритма не понадобилось.
+  // Почему не «выбрасывать точки по одной после расчёта»: выброшенная точка уже не вернётся, и в списке окажется лишнее.
+  // start — лучший план обычного расчёта (с него начинаем), ms — запас времени.
+  function solveCalm(P, start, near, rnd, ms, rounds) {
+    var started = Date.now(), deadline = started + ms;
+    var D = { id: NOT_TODAY, name: 'Не везём сегодня', cap: 0, dummy: true };
+    var Q = Object.assign({}, P, { vehicles: P.vehicles.concat([D]), strict: true, dropAt: P.vehicles.length });
+    var best = start.map(function (r) { return r.slice(); }).concat([[]]);
+    var bestCost = new LocalSearch(Q, best, near).run(deadline);
+    for (var round = 0; round < rounds && Date.now() < deadline; round++) {
+      var trial = shake(Q, best, rnd, round);
+      var cost = new LocalSearch(Q, trial, near).run(deadline);
+      if (cost < bestCost - 1e-6) { best = trial; bestCost = cost; }
+    }
+    // Страховка: если поиск не успел убрать какое-то нарушение, снимаем точки с этой машины, пока оно не уйдёт,
+    // и пробуем вернуть их туда, где они ничего не нарушат. Обычно сюда ничего не попадает.
+    if (repair(Q, best)) new LocalSearch(Q, best, near).run(Date.now() + 300);
+    var out = finish(Q, describe(Q, best));
+    out.ms = Date.now() - started;
+    return out;
+  }
+
+  // Нарушает ли маршрут правила — так же, как это считает describe (что попадёт в «Что не сходится»).
+  function routeBad(P, v, e) {
+    if (e.overload > Math.max(0.5, v.cap * (P.st.overloadTolerancePct || 0) / 100)) return true;
+    if (e.overtime > Math.max(0.5, P.st.overtimeToleranceMin || 0)) return true;
+    if (e.center > 0 || e.underload > 0) return true;
+    return e.stops.some(function (x) { return x.late > 0.5; });
+  }
+  function repair(Q, routes) {
+    var D = Q.dropAt, changed = false;
+    for (var k = 0; k < D; k++) {
+      var v = Q.vehicles[k], guard = 0;
+      while (routes[k].length && routeBad(Q, v, evalRoute(Q, v, routes[k], true)) && guard++ < 1000) {
+        var e = evalRoute(Q, v, routes[k], true), only = e.underload > 0 && e.overload <= 0.5 && e.overtime <= 0.5 && !e.late && !e.center;
+        changed = true;
+        if (only) { routes[D] = routes[D].concat(routes[k]); routes[k] = []; break; }   // недогруз: машина остаётся в гараже
+        var bi = 0, bc = Infinity;                           // снимаем точку, без которой маршрут дешевле всего
+        for (var i = 0; i < routes[k].length; i++) {
+          var c = evalRoute(Q, v, routes[k].slice(0, i).concat(routes[k].slice(i + 1))).cost;
+          if (c < bc) { bc = c; bi = i; }
+        }
+        routes[D].push(routes[k].splice(bi, 1)[0]);
+      }
+    }
+    if (!changed) return false;
+    // Вернуть снятое: каждую точку — в самое дешёвое место, где маршрут остаётся без нарушений.
+    routes[D].slice().sort(function (a, b) { return dropCost(Q.stops[b]) - dropCost(Q.stops[a]); }).forEach(function (stop) {
+      var best = Infinity, bk = -1, bj = 0;
+      for (var k = 0; k < D; k++) {
+        var base = evalRoute(Q, Q.vehicles[k], routes[k]).cost;
+        for (var j = 0; j <= routes[k].length; j++) {
+          var t = routes[k].slice(0, j); t.push(stop); t = t.concat(routes[k].slice(j));
+          var e = evalRoute(Q, Q.vehicles[k], t, true);
+          if (!routeBad(Q, Q.vehicles[k], e) && e.cost - base < best) { best = e.cost - base; bk = k; bj = j; }
+        }
+      }
+      if (bk >= 0 && best < dropCost(Q.stops[stop])) { routes[D].splice(routes[D].indexOf(stop), 1); routes[bk].splice(bj, 0, stop); }
+    });
+    return true;
   }
 
   // Общие итоги плана: остановки, общий вес и вместимость, предупреждение о нехватке машин.
@@ -562,22 +660,35 @@
     P.stops.forEach(function (s) { totalKg += s.kg; });
     P.vehicles.forEach(function (v) { totalCap += v.cap; });
     out.stops = P.stops; out.totalKg = totalKg; out.totalCap = totalCap; out.byRoad = P.M.byRoad;
+    // «Не везём сегодня» — номера остановок: из записи плана и снимка дня (P.dropped)
+    // или из воображаемой машины варианта «без нарушений» (describe кладёт их в out.dropped).
+    var mine = {}, droppedKg = 0;
+    (out.dropped || []).forEach(function (i) { mine[i] = true; });
     out.live = P.live || null; out.dropped = [];
+    P.stops.forEach(function (s, i) { if (P.dropped[i] || mine[i]) { out.dropped.push(i); droppedKg += s.kg; } });
+    out.droppedKg = droppedKg;
     if (P.live) {
-      var droppedKg = 0;
-      P.stops.forEach(function (s, i) { if (P.dropped[i]) { out.dropped.push(i); droppedKg += s.kg; } });
       if (out.dropped.length) out.problems.unshift('Сегодня не доставим: ' + out.dropped.length + ' точ., ' + Math.round(droppedKg) + ' кг');
       return out;                                           // вместимость «на весь день» в идущем дне уже не важна
     }
-    if (totalKg > totalCap) out.problems.unshift('Груз не помещается в машины: лишних ' + Math.round(totalKg - totalCap) + ' кг');
+    // До начала дня «не везём» — не нарушение, а решение логиста: оно видно отдельным списком, а не в «Что не сходится».
+    if (totalKg - droppedKg > totalCap) out.problems.unshift('Груз не помещается в машины: лишних ' + Math.round(totalKg - droppedKg - totalCap) + ' кг');
     return out;
   }
 
   // ПЛАН → КОРОТКАЯ ЗАПИСЬ для базы: для каждой машины — номера первых заказов её остановок по порядку.
+  // Если до начала дня какие-то точки сегодня не везём (вариант «без нарушений», этап 3), они записываются
+  // последней строкой с машиной NOT_TODAY (0) — это та самая воображаемая машина «не везём». Так список хранится
+  // в базе вместе с планом, и все экраны и страница водителя читают его тем же fromAssignment.
+  // В идущем дне список «не доставим» лежит в снимке дня (live.dropped), строка не нужна.
   function toAssignment(plan) {
-    return plan.routes.map(function (r) {
+    var out = plan.routes.map(function (r) {
       return { v: r.vehicle.id, s: r.seq.map(function (i) { return plan.stops[i].orders[0].id; }) };
     });
+    if (!plan.live && plan.dropped && plan.dropped.length) {
+      out.push({ v: NOT_TODAY, s: plan.dropped.map(function (i) { return plan.stops[i].orders[0].id; }) });
+    }
+    return out;
   }
 
   // КОРОТКАЯ ЗАПИСЬ → ПЛАН. Считает время и нарушения для готового распределения, ничего не переставляя.
@@ -591,6 +702,14 @@
     var routes = P.vehicles.map(function () { return []; });
     var moved = move && stopOf[move.orderId] !== undefined ? stopOf[move.orderId] : -1;
     (assignment || []).forEach(function (a) {
+      if (a.v === NOT_TODAY) {                              // строка «не везём сегодня» (см. toAssignment)
+        (a.s || []).forEach(function (oid) {
+          var i = stopOf[oid];
+          if (i === undefined || used[i] || i === moved) return;
+          used[i] = true; P.dropped[i] = true;
+        });
+        return;
+      }
       var k = vIndex[a.v];
       if (k === undefined) return;
       a.s.forEach(function (oid) {
@@ -641,7 +760,7 @@
   }
 
   var api = { solve: solve, naive: naive, fromAssignment: fromAssignment, toAssignment: toAssignment, haversineKm: haversineKm,
-    roadsFrom: roadsFrom,
+    roadsFrom: roadsFrom, NOT_TODAY: NOT_TODAY,
     // Внутренние части для перестроения в течение дня (js/replan.js).
     core: { prepare: prepare, liveTail: liveTail, cutOf: cutOf, describe: describe, finish: finish } };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
