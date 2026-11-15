@@ -157,23 +157,48 @@
     try { localStorage.setItem(CACHE_KEY, JSON.stringify(all)); } catch (e) { /* хранилище переполнено — не страшно */ }
   }
   function wait(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+  // Ждём ответа сервера не дольше 8 секунд: при плохом Wi-Fi запрос может «повиснуть», а линии идут
+  // по очереди, и один повисший запрос задержал бы все остальные. Не дождались — линия остаётся пунктиром.
   function fetchRoad(path, attempt) {
-    return fetch(ROAD_URL + path + '?overview=full&geometries=geojson').then(function (r) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 8000);
+    return fetch(ROAD_URL + path + '?overview=full&geometries=geojson', ctrl ? { signal: ctrl.signal } : {}).then(function (r) {
+      clearTimeout(timer);
       if (r.status === 429 && attempt < 2) return wait(2500).then(function () { return fetchRoad(path, attempt + 1); });
       return r.json();
     }).then(function (j) {
       if (!j || !j.routes || !j.routes.length) return null;
       return { coords: j.routes[0].geometry.coordinates.map(function (c) { return [+c[0].toFixed(5), +c[1].toFixed(5)]; }),
         km: j.routes[0].distance / 1000, min: j.routes[0].duration / 60 };
-    }).catch(function () { return null; });
+    }).catch(function () { clearTimeout(timer); return null; });
   }
   function roadPath(depot, points, open) {       // open — без возвращения на завод
     return [depot].concat(points, open ? [] : [depot]).map(function (p) { return p.lon.toFixed(5) + ',' + p.lat.toFixed(5); }).join(';');
   }
-  // Уже известная линия (без запроса) или null.
+  // Линии эталонного плана и «плана по списку» запрошены заранее и лежат в файле js/base-roads.js
+  // (решение 12: после «Сбросить демо» карта рисует их без интернета и без демо-сервера OSRM).
+  // Ключ в файле — тот же путь «завод → остановки → завод», поэтому если маршрут другой, файл просто молчит.
+  // Линия записана сжато («encoded polyline»: каждое число — разница с предыдущей точкой, 5 знаков после запятой).
+  function decodeLine(text) {
+    var coords = [], i = 0, lat = 0, lon = 0;
+    function next() {
+      var v = 0, shift = 0, b;
+      do { b = text.charCodeAt(i++) - 63; v |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20 && i < text.length);
+      return v & 1 ? ~(v >> 1) : v >> 1;
+    }
+    while (i < text.length) { lat += next(); lon += next(); coords.push([lon / 1e5, lat / 1e5]); }
+    return coords;
+  }
+  function fromFile(path) {
+    var all = window.MILK_BASE_ROADS, rec = all && Object.prototype.hasOwnProperty.call(all, path) ? all[path] : null;
+    if (!rec || typeof rec.line !== 'string') return null;
+    try { return { coords: decodeLine(rec.line), km: rec.km, min: rec.min, fromFile: true }; } catch (e) { return null; }
+  }
+  // Уже известная линия (без запроса) или null: из памяти, из файла эталона, из браузера.
   function roadCached(depot, points, open) {
     var path = roadPath(depot, points, open);
-    return roadCache[path] || readStored()[path] || null;
+    if (!roadCache[path]) roadCache[path] = fromFile(path) || readStored()[path] || null;
+    return roadCache[path];
   }
   function roadRoute(depot, points, open) {
     var path = roadPath(depot, points, open), hit = roadCached(depot, points, open);
@@ -189,5 +214,5 @@
     return result;
   }
 
-  window.MilkMap = { init: init, draw: draw, roadRoute: roadRoute, roadCached: roadCached, mode: function () { return mode; } };
+  window.MilkMap = { init: init, draw: draw, roadRoute: roadRoute, roadCached: roadCached, decodeLine: decodeLine, roadPath: roadPath, mode: function () { return mode; } };
 })();

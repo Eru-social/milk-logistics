@@ -1,0 +1,19 @@
+/* Шрифты лежат в проекте, а не на серверах Google: показ не зависит от интернета на площадке (решение 12).
+   Файлы — из открытого репозитория google/fonts, урезаны до латиницы, кириллицы и знаков препинания,
+   чтобы весили меньше (Golos Text 60 КБ, Unbounded 80 КБ). Лицензия OFL — файлы OFL-*.txt рядом.
+   «Переменные» шрифты: один файл на все нужные начертания (Golos Text 400–700, Unbounded 500–600).
+   font-display: swap — пока шрифт не загрузился, текст сразу виден системным шрифтом. */
+@font-face {
+  font-family: "Golos Text";
+  src: url("golos-text.woff") format("woff");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Unbounded";
+  src: url("unbounded.woff") format("woff");
+  font-weight: 500 600;
+  font-style: normal;
+  font-display: swap;
+}

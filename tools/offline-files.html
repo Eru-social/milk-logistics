@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Молочный Мир: файлы для работы без интернета</title>
+<style>
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; color: #13212c; }
+  button { font: inherit; padding: 10px 18px; border-radius: 10px; border: 0; background: #1247d6; color: #fff; cursor: pointer; }
+  button:disabled { background: #9aa8b5; cursor: default; }
+  #log { white-space: pre-wrap; background: #f3f5f8; border-radius: 10px; padding: 12px; margin-top: 16px; font: 13px/1.4 ui-monospace, Menlo, monospace; min-height: 60px; }
+  .ok { color: #1d7a3a; } .bad { color: #c22b38; }
+</style>
+</head>
+<body>
+<h1>Файлы для работы без интернета</h1>
+<p>Служебная страница этапа 6 (решение 12). Скачивает с чужих серверов то, что нельзя скачать из облачной сессии Claude,
+и отдаёт файлами — их нужно положить в проект:</p>
+<ul>
+  <li><b>supabase.js</b> и <b>supabase-LICENSE.txt</b> — клиент базы supabase-js 2.118.0 (с cdn.jsdelivr.net), точно тот файл, что подключён сейчас: страница сверяет его отпечаток SHA-256;</li>
+  <li><b>base-roads.js</b> — линии по улицам для эталонного плана и «плана по списку» (с демо-сервера OSRM), чтобы карта рисовала их без интернета.</li>
+</ul>
+<p>Нажмите кнопку и подождите около минуты: линии запрашиваются по одной, у бесплатного сервера ограничение на частоту.</p>
+<button type="button" id="go">Скачать файлы</button>
+<div id="log" aria-live="polite"></div>
+
+<script src="../js/settings.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/roads.js"></script>
+<script src="../js/base-plan.js"></script>
+<script src="../js/solver.js"></script>
+<script src="../js/map.js"></script>
+<script>
+// Ключ маршрута берётся из js/map.js (MilkMap.roadPath), поэтому совпадает с тем, что ищет карта.
+// План собирается из короткой записи эталона так же, как на экране диспетчера (MilkSolver.fromAssignment).
+// Если поменяются эталон или исходные данные — открыть эту страницу на сайте ещё раз и положить новый base-roads.js.
+(function () {
+  'use strict';
+  var SUPABASE_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js';
+  var SUPABASE_LICENSE = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/LICENSE';
+  var SUPABASE_SHA256 = 'ee3be8de192b97cb1d73d1e95d6b82bb1f6b658c0f97c4ef757fc331996ed3d3';   // отпечаток файла на 15 ноября 2026
+  var ROAD_URL = 'https://router.project-osrm.org/route/v1/driving/';                           // тот же запрос, что в js/map.js
+  var log = document.getElementById('log');
+  function say(text, kind) { var line = document.createElement('div'); line.textContent = text; if (kind) line.className = kind; log.appendChild(line); }
+  function wait(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
+  function hex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); }
+  function save(name, text) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // Упрощение линии (Дуглас — Пекер): выбрасываем точки, которые отходят от прямой меньше чем на 2 метра.
+  function simplify(coords, meters) {
+    if (coords.length < 3) return coords;
+    var k = Math.cos(coords[0][1] * Math.PI / 180), M = 111320, keep = coords.map(function () { return false; });
+    var xy = coords.map(function (c) { return [c[0] * M * k, c[1] * M]; }), stack = [[0, coords.length - 1]];
+    keep[0] = keep[coords.length - 1] = true;
+    while (stack.length) {
+      var ab = stack.pop(), a = ab[0], b = ab[1], best = -1, far = 0;
+      var ax = xy[a][0], ay = xy[a][1], dx = xy[b][0] - ax, dy = xy[b][1] - ay, len = Math.hypot(dx, dy);
+      for (var i = a + 1; i < b; i++) {
+        var d = len ? Math.abs(dy * (xy[i][0] - ax) - dx * (xy[i][1] - ay)) / len : Math.hypot(xy[i][0] - ax, xy[i][1] - ay);
+        if (d > far) { far = d; best = i; }
+      }
+      if (best > 0 && far > meters) { keep[best] = true; stack.push([a, best], [best, b]); }
+    }
+    return coords.filter(function (c, i) { return keep[i]; });
+  }
+  // Сжатая запись («encoded polyline», 5 знаков): обратная к MilkMap.decodeLine.
+  function encodeLine(coords) {
+    var out = '', plat = 0, plon = 0;
+    function put(v) {
+      v = v < 0 ? ~(v << 1) : v << 1;
+      while (v >= 0x20) { out += String.fromCharCode((0x20 | (v & 0x1f)) + 63); v >>= 5; }
+      out += String.fromCharCode(v + 63);
+    }
+    coords.forEach(function (c) {
+      var lat = Math.round(c[1] * 1e5), lon = Math.round(c[0] * 1e5);
+      put(lat - plat); put(lon - plon); plat = lat; plon = lon;
+    });
+    return out;
+  }
+  async function fetchRoad(path) {
+    for (var attempt = 0; attempt < 4; attempt++) {
+      try {
+        var r = await fetch(ROAD_URL + path + '?overview=full&geometries=geojson');
+        if (r.status === 429) { await wait(3000); continue; }
+        var j = await r.json();
+        if (j && j.routes && j.routes.length) return j.routes[0];
+      } catch (e) { await wait(2000); }
+    }
+    return null;
+  }
+
+  async function supabaseFiles() {
+    say('Скачиваю supabase.js…');
+    var buf = await (await fetch(SUPABASE_URL)).arrayBuffer();
+    var sum = hex(await crypto.subtle.digest('SHA-256', buf));
+    if (sum !== SUPABASE_SHA256) { say('Отпечаток supabase.js не совпал (' + sum + '): файл на сервере поменялся, не сохраняю.', 'bad'); return false; }
+    var license = await (await fetch(SUPABASE_LICENSE)).text();
+    save('supabase.js', new TextDecoder().decode(buf));
+    save('supabase-LICENSE.txt', license);
+    say('supabase.js: ' + Math.round(buf.byteLength / 1024) + ' КБ, отпечаток совпал.', 'ok');
+    return true;
+  }
+
+  async function roadFile() {
+    var D = window.MILK_DATA, st = Object.assign({}, window.MILK_SETTINGS), S = window.MilkSolver;
+    var input = { depot: D.depot, orders: D.orders, vehicles: D.vehicles, settings: st, roads: S.roadsFrom(window.MILK_ROADS) };
+    var lines = {}, list = [];
+    [['эталон', S.fromAssignment(input, window.MILK_BASE_PLAN.assignment)], ['по списку', S.naive(input)]].forEach(function (pair) {
+      var plan = pair[1];
+      plan.routes.forEach(function (r) {
+        if (!r.seq.length) return;
+        var path = window.MilkMap.roadPath(D.depot, r.stops.map(function (x) { return plan.stops[x.stop]; }), false);
+        if (!(path in lines)) { lines[path] = null; list.push([pair[0] + ', ' + r.vehicle.name, path]); }
+      });
+    });
+    say('Линий по улицам: ' + list.length + '. Запрашиваю по одной…');
+    var bad = 0;
+    for (var i = 0; i < list.length; i++) {
+      var route = await fetchRoad(list[i][1]);
+      if (!route) { bad++; delete lines[list[i][1]]; say('  не получено: ' + list[i][0], 'bad'); continue; }
+      var coords = simplify(route.geometry.coordinates.map(function (c) { return [+c[0].toFixed(5), +c[1].toFixed(5)]; }), 2);
+      var line = encodeLine(coords), back = window.MilkMap.decodeLine(line);
+      if (back.length !== coords.length || Math.abs(back[0][0] - coords[0][0]) > 1e-6) { bad++; delete lines[list[i][1]]; say('  ошибка сжатия: ' + list[i][0], 'bad'); continue; }
+      lines[list[i][1]] = { line: line, km: +(route.distance / 1000).toFixed(2), min: +(route.duration / 60).toFixed(1) };
+      say('  ' + (i + 1) + '/' + list.length + ' ' + list[i][0] + ': ' + lines[list[i][1]].km + ' км');
+      await wait(400);
+    }
+    if (bad) { say('Не получено линий: ' + bad + '. Файл не сохраняю — нажмите кнопку ещё раз через минуту.', 'bad'); return false; }
+    var text = '// ЛИНИИ ПО УЛИЦАМ для эталонного плана и «плана по списку». Файл создан страницей tools/offline-files.html, руками не править.\n' +
+      '// Ключ — координаты завода и остановок маршрута по порядку (как MilkMap.roadPath в js/map.js), line — линия в сжатом виде\n' +
+      '// (encoded polyline, расшифровка — MilkMap.decodeLine), km и min — длина и время по данным OSRM.\n' +
+      '// Нужен, чтобы карта рисовала линии эталона без интернета и без демо-сервера OSRM (решение 12). Проверка: tests/check-offline.js.\n' +
+      'window.MILK_BASE_ROADS = ' + JSON.stringify(lines) + ';\n';
+    save('base-roads.js', text);
+    say('base-roads.js: ' + Math.round(text.length / 1024) + ' КБ.', 'ok');
+    return true;
+  }
+
+  document.getElementById('go').addEventListener('click', async function () {
+    this.disabled = true; log.textContent = '';
+    try {
+      var a = await supabaseFiles(), b = await roadFile();
+      say(a && b ? 'Готово: три файла скачаны (supabase.js, supabase-LICENSE.txt, base-roads.js). Положите их в папку milk-logistics на Рабочем столе.' :
+        'Не всё получилось — см. строки выше.', a && b ? 'ok' : 'bad');
+    } catch (e) { say('Ошибка: ' + e.message + '. Нужен интернет.', 'bad'); }
+    this.disabled = false;
+  });
+})();
+</script>
+</body>
+</html>
