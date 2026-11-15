@@ -860,8 +860,13 @@
     clearTimeout(fallbackTimer);
     fallbackTimer = setTimeout(recalc, 8000);
   }
+  // Пока экран сам переводит базу на «Завтра» (сброс + запись обычного дня), отголоски этих записей приходят с опозданием
+  // и выглядят как правки с другого экрана. В это время (и ещё 5 с после) данные с сервера не применяются (goTomorrow).
+  var quietUntil = 0;
+  function quiet() { return Date.now() < quietUntil; }
   var remote = {
     order: function (row, oldId) {
+      if (quiet()) return;
       if (!row) { state.orders = state.orders.filter(function (o) { return o.id !== oldId; }); remoteStructure = true; return queueRemote(true); }
       var o = orderById(row.id);
       if (!o) {
@@ -873,6 +878,7 @@
       updateOrderRow(o); queueRemote(true);
     },
     vehicle: function (row, oldId) {
+      if (quiet()) return;
       if (!row) { state.vehicles = state.vehicles.filter(function (v) { return v.id !== oldId; }); return queueRemote(true); }
       var v = vehicleById(row.id);
       if (!v) { state.vehicles.push(row); state.vehicles.sort(function (a, b) { return a.id - b.id; }); return queueRemote(true); }
@@ -881,6 +887,7 @@
       queueRemote(true);
     },
     settings: function (data) {
+      if (quiet()) return;
       var merged = Object.assign(clone(DEFAULTS), data || {});
       if (JSON.stringify(merged) === JSON.stringify(state.settings)) return;
       state.settings = merged; buildSettings(); queueRemote(true);
@@ -1143,6 +1150,7 @@
     if (isTomorrow()) { if (view !== 'best') setView('best'); return; }
     proposal = null;
     if (chat) chat.reset();
+    quietUntil = Date.now() + 60000;
     setStatus('Готовлю завтра…');
     setTimeout(function () {
       var data = tomorrowData(), plan = window.MilkFleet.solve(data);
@@ -1154,10 +1162,12 @@
         buildOrders(); buildSettings(); $('order-search').value = ''; filterOrders('');
         render(true);
         var said = 'завтра: вес заказов на 30% меньше; мелкая точка — до ' + state.settings.smallStopKg + ' кг (наше допущение)';
-        if (!before) { shareDraft(); saveLocal(); setStatus(said); if (message) toast(message, 'warn'); return; }
+        if (!before) { quietUntil = 0; shareDraft(); saveLocal(); setStatus(said); if (message) toast(message, 'warn'); return; }
         setStatus('сохраняю завтра…');
         // Сначала данные, потом план: другие экраны получат план последним и покажут его, а не начнут считать сами.
         window.MilkProposal.save(Store, before, state).then(function () {
+          clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false;
+          quietUntil = Date.now() + 5000;          // последние отголоски своих же записей
           shareDraft(); saveLocal();
           setStatus(said);
           toast('Завтра — обычный день: план построен, не утверждён. Водители увидят его после «Утвердить план».');

@@ -274,6 +274,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     // «Завтра» на экране A — экран B получает тот же рабочий день
     A.fire('view-tomorrow', 'click'); await clock.advance(60000);
     ok(/44,[56] т/.test(B.text('kpis')) && A.text('kpis') === B.text('kpis'), '«Завтра» с экрана A: экран B показывает тот же обычный день');
+    ok(/^завтра:/.test(A.el('status').textContent), 'экран A не пересчитывал план сам после перехода (отголоски сброса не приняты за чужие правки): ' + A.el('status').textContent);
     ok(server.tables.app_settings.length && JSON.stringify(server.tables.app_settings).indexOf('tomorrow') >= 0, 'в базе отметка «завтра»');
     B.fire('view-best', 'click'); await clock.advance(30000);
     ok(/63,6 т/.test(A.text('kpis')) && A.text('kpis') === B.text('kpis'), '«Сегодня» с экрана B: оба экрана снова в дне максимальной загрузки');
