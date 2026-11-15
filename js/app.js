@@ -38,17 +38,6 @@
     for (var i = 0; i < state.vehicles.length; i++) if (state.vehicles[i].id === vehicleId) return COLORS[i % COLORS.length];
     return '#888';
   }
-  // Цвет цифры на цветном квадрате карточки: чёрный или белый — какой читается лучше (как на макете автора:
-  // на красном — чёрная цифра). Считается по яркости цвета, правило WCAG.
-  function inkOn(hex) {
-    var c = /^#([0-9a-f]{6})$/i.exec(hex || '');
-    if (!c) return '#000';
-    var L = [0, 2, 4].map(function (i) {
-      var x = parseInt(c[1].substr(i, 2), 16) / 255;
-      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
-    });
-    return 0.2126 * L[0] + 0.7152 * L[1] + 0.0722 * L[2] > 0.179 ? '#000' : '#fff';
-  }
 
   // ---------- работа без сервера (запасной режим) ----------
   function roadsFromFile() { return window.MILK_ROADS ? window.MilkSolver.roadsFrom(window.MILK_ROADS) : null; }
@@ -301,19 +290,18 @@
       if (r.late > 0.5) flags += '<span class="pill bad">опоздание</span>';
       if (r.center > 0) flags += '<span class="pill bad">большая машина в центре</span>';
       if (!live && r.loadPct < st.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
-      // Карточка машины — по макету автора (15 ноября): слева цветной квадрат с номером машины (цвет её линии на карте),
-      // справа полоса загрузки «загружено/вместимость  процент» и строка «точки · км · выезд–возвращение»,
-      // внизу жирно — последняя отметка водителя. Между частями — точки «·».
-      // Пока день идёт, к строке добавляется, что машине осталось.
+      // Строка машины — в том же виде, что строки таблицы заказов (просьба автора 15 ноября): слева цветная плашка
+      // с номером машины, как в столбце «Маш.» у заказов; жирно — «точки · км · выезд–возвращение»,
+      // серым ниже — загрузка «загружено/вместимость кг · %» с полоской. Пока день идёт, к строке добавляется, что осталось.
       var status = !live ? '' : ' · ' + (r.broken ? 'снята с маршрута' : (left ? 'осталось ' + left + ' точ' : (r.returned ? 'на заводе' : 'едет на завод')));
       var vnum = String(r.vehicle.name).split(' · ')[0].replace(/^Машина\s*/, '') || String(r.vehicle.id);
-      html += '<div class="route' + (sel ? ' sel' : '') + (r.broken ? ' broken' : '') + '" style="--c:' + c + ';--c-ink:' + inkOn(c) + '">' +
+      html += '<div class="route' + (sel ? ' sel' : '') + (r.broken ? ' broken' : '') + '" style="--c:' + c + '">' +
         '<button type="button" class="route-head" data-k="' + k + '" aria-expanded="' + sel + '" title="' + esc(r.vehicle.name) + '">' +
-        '<span class="route-num" aria-label="' + esc(r.vehicle.name) + '">' + esc(vnum) + '</span>' +
+        '<span class="chip route-num" style="background:' + c + '" aria-label="' + esc(r.vehicle.name) + '">' + esc(vnum) + '</span>' +
         '<span class="route-main">' +
-          '<span class="route-load"><span class="bar ' + barClass + '"><i style="width:' + Math.min(100, r.loadPct).toFixed(0) + '%"></i></span>' +
-          '<span>' + Math.round(r.load) + '/' + Math.round(r.vehicle.cap) + '</span><span>' + num(r.loadPct) + '%</span></span>' +
           '<span class="route-meta">' + r.seq.length + ' точ · ' + num(r.km, 1) + ' км · ' + clock(r.depart) + '–' + clock(r.back) + status + '</span>' +
+          '<span class="route-load"><span>' + Math.round(r.load) + '/' + Math.round(r.vehicle.cap) + ' кг · ' + num(r.loadPct) + '%</span>' +
+          '<span class="bar ' + barClass + '"><i style="width:' + Math.min(100, r.loadPct).toFixed(0) + '%"></i></span></span>' +
         '</span>' +
         (last ? '<span class="route-now' + (last.kind === 'problem' ? ' bad' : '') + '">' + clockOf(last.at) + ' · ' + esc(KIND[last.kind]) +
           (last.note ? ': ' + esc(last.note) : '') + ' · разгружено ' + done + '/' + r.seq.length + '</span>' : '') +
