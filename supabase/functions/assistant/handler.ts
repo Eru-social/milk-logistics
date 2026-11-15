@@ -5,10 +5,10 @@
 // Поставщик модели заменяемый: подходит любой с «OpenAI-совместимым» адресом (Groq, OpenRouter, Cloudflare,
 // Mistral, OpenAI…). Меняется тремя секретами, код трогать не нужно:
 //   MODEL_API_KEY — ключ (обязательно);
-//   MODEL_API_URL — адрес, по умолчанию Groq (бесплатно, без банковской карты, 1000 запросов в сутки, отвечает за 1–2 секунды);
-//   MODEL_NAME    — название модели, по умолчанию openai/gpt-oss-120b (хорошо понимает русский и умеет отвечать строгим JSON).
-// Запасной вариант без карты — OpenRouter: MODEL_API_URL = https://openrouter.ai/api/v1/chat/completions,
-// MODEL_NAME — любая модель с «:free» в названии (50 запросов в сутки).
+//   MODEL_API_URL — адрес, по умолчанию OpenRouter (выбор автора 14 ноября: без банковской карты, 50 запросов в сутки);
+//   MODEL_NAME    — название модели, по умолчанию baidu/ernie-5.5-flash-preview:free (бесплатная на OpenRouter).
+// Запасной вариант — Groq: MODEL_API_URL = https://api.groq.com/openai/v1/chat/completions,
+// MODEL_NAME = openai/gpt-oss-120b (1000 запросов в сутки, но только 8000 токенов в минуту — 3–4 фразы в минуту).
 //
 // Защита лимита: фраза не длиннее 500 знаков; не больше 8 запросов в минуту с одного адреса и 300 в сутки всего;
 // одинаковые фразы отвечаются из памяти без запроса к модели. Память живёт, пока жив экземпляр функции
@@ -19,6 +19,7 @@ const DEFAULT_URL = 'https://openrouter.ai/api/v1/chat/completions';   // выб
 const DEFAULT_MODEL = 'baidu/ernie-5.5-flash-preview:free';   // бесплатная, 50 запросов в сутки; Groq — запасной вариант (см. выше)
 const MODEL_TIMEOUT_MS = 7000;           // экран ждёт 8 секунд; модели даём 7, чтобы успеть ответить «не успела»
 const PER_MINUTE = 8, PER_DAY = 300, CACHE_SIZE = 300;
+const RETRY_PAUSE_MS = 1000;             // пауза перед единственным повтором, если поставщик ответил «занято» (см. ниже)
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -77,15 +78,23 @@ export function makeHandler(deps: Deps) {
       const ask: Record<string, unknown> = { model, messages: messages(mode, vehicles, text), temperature: 0, response_format: { type: 'json_object' } };
       // gpt-oss «рассуждает» перед ответом; для перевода фразы в список хватает короткого рассуждения: быстрее и меньше расход лимита.
       if (model.indexOf('gpt-oss') >= 0) ask.reasoning_effort = 'low';
-      const res = await deps.fetch(deps.env('MODEL_API_URL') || DEFAULT_URL, {
+      const send = () => deps.fetch(deps.env('MODEL_API_URL') || DEFAULT_URL, {
         method: 'POST', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
         body: JSON.stringify(ask)
       });
+      let res = await send();
+      // Бесплатные модели OpenRouter делят мощности со всеми, поэтому иногда отвечают «занято» (429) или ошибкой
+      // сервера (5xx), хотя наш лимит не исчерпан. Проверка 15 ноября: 2 таких ответа из 20 фраз. Один повтор через
+      // секунду почти всегда проходит; общий срок 7 секунд (таймер выше) повтор не продлевает.
+      if (res.status === 429 || res.status >= 500) {
+        await new Promise((ok) => setTimeout(ok, RETRY_PAUSE_MS));
+        res = await send();
+      }
       if (!res.ok) {
         const limitHit = res.status === 429;
         return reply(502, { ok: false, error: limitHit ? 'limit' : 'model',
-          message: limitHit ? 'Лимит модели у поставщика исчерпан. Заполните строки вручную.' : 'Модель ответила ошибкой (' + res.status + '). Заполните строки вручную.' });
+          message: limitHit ? 'Модель у поставщика сейчас занята или её лимит исчерпан. Попробуйте ещё раз через минуту или заполните строки вручную.' : 'Модель ответила ошибкой (' + res.status + '). Заполните строки вручную.' });
       }
       const data = await res.json();
       content = data?.choices?.[0]?.message?.content || '';

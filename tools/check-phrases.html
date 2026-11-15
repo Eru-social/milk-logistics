@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Проверка 20 фраз — команда словами</title>
+<style>
+  body { font: 15px/1.45 system-ui, sans-serif; margin: 24px; max-width: 900px; color: #1d2733; }
+  button { font: inherit; padding: 8px 16px; cursor: pointer; }
+  li { margin: 8px 0; }
+  .ok { color: #2a7d3a; } .ask { color: #9a6a00; } .bad { color: #c0392b; font-weight: 600; }
+  small { color: #667; display: block; }
+</style>
+</head>
+<body>
+<!-- ПРОВЕРКА КОМАНДЫ СЛОВАМИ С НАСТОЯЩЕЙ МОДЕЛЬЮ, В БРАУЗЕРЕ (этап 2).
+     То же, что tools/check-phrases.js, но без Node.js: открыть страницу на сайте и нажать кнопку.
+     Тратит 20 запросов из бесплатного дневного лимита модели (у OpenRouter — 50 в сутки), поэтому
+     сама не запускается. На экран диспетчера не влияет: в базу ничего не пишет. -->
+<h1>Команда словами: проверка 20 фраз</h1>
+<p>Каждая фраза из <code>tests/phrases.json</code> уходит в серверную функцию, магазины ищет наш код, строки сравниваются с ожидаемыми.
+Готово по плану этапа 2, когда верно не меньше 18 из 20, а неверных нет. Прогон идёт около 3 минут и тратит 20 запросов к модели.</p>
+<button type="button" id="go">Проверить 20 фраз</button>
+<p id="sum"></p>
+<ol id="out"></ol>
+<script src="../js/config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/changes.js"></script>
+<script src="../js/assistant.js"></script>
+<script>
+(function () {
+  'use strict';
+  var A = window.MilkAssistant, D = window.MILK_DATA;
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  document.getElementById('go').addEventListener('click', async function () {
+    this.disabled = true;
+    var out = document.getElementById('out'), sum = document.getElementById('sum'), good = 0, asked = 0, wrong = 0, busy = 0;
+    var phrases = (await fetch('../tests/phrases.json?x=' + Date.now()).then(function (r) { return r.json(); })).phrases;
+    for (var n = 0; n < phrases.length; n++) {
+      var p = phrases[n], verdict, cls, got = '';
+      sum.textContent = 'Фраза ' + (n + 1) + ' из ' + phrases.length + '…';
+      // Пауза 8,5 секунды между фразами: функция пускает не больше 8 запросов в минуту с одного адреса.
+      var res = await A.ask(p.text, p.mode, D.vehicles, { timeoutMs: 15000 });
+      if (!res.ok) { verdict = 'СБОЙ (модель не ответила, это не неверное действие; повторите фразу отдельно): ' + res.message; cls = 'ask'; busy++; }
+      else {
+        var r = A.resolve(res, { orders: D.orders, vehicles: D.vehicles }), lines = r.rows.map(A.line);
+        got = JSON.stringify(lines) + (r.questions.length ? ' · вопросы: ' + r.questions.join(' / ') : '');
+        if (JSON.stringify(lines) === JSON.stringify(p.expect) && (!p.ask || r.questions.length)) { verdict = 'верно'; cls = 'ok'; good++; }
+        else if (r.questions.length && lines.every(function (l) { return p.expect.indexOf(l) >= 0; })) { verdict = 'вопрос'; cls = 'ask'; asked++; }
+        else { verdict = 'НЕВЕРНО, ждали ' + JSON.stringify(p.expect); cls = 'bad'; wrong++; }
+      }
+      out.insertAdjacentHTML('beforeend', '<li>' + esc(p.text) + (p.mode === 'live' ? ' <i>(день идёт)</i>' : '') +
+        '<br><span class="' + cls + '">' + esc(verdict) + '</span><small>' + esc(got) + '</small></li>');
+      if (n < phrases.length - 1) await wait(8500);
+    }
+    sum.innerHTML = '<b>Итог: верно ' + good + ' из 20, вопрос вместо действия ' + asked + ', неверно ' + wrong + ', сбой поставщика ' + busy + '. ' +
+      (good >= 18 && !wrong ? 'Готово по плану этапа 2.' : 'Пока не готово: нужно не меньше 18 верных и ни одного неверного.') + '</b>';
+    this.disabled = false;
+  });
+})();
+</script>
+</body>
+</html>

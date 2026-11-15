@@ -62,7 +62,7 @@
 
 ## Проверки
 
-Из корня проекта: `for t in tests/check-*.js; do node $t || echo ПРОВАЛ $t; done`. Серверная функция «команда словами»: `deno run tests/check-function.ts`; с настоящей моделью: `node tools/check-phrases.js`.
+Из корня проекта: `for t in tests/check-*.js; do node $t || echo ПРОВАЛ $t; done`. Серверная функция «команда словами»: `deno run tests/check-function.ts`; с настоящей моделью: `node tools/check-phrases.js` или страница `tools/check-phrases.html` на сайте (тратит 20 запросов из дневного лимита модели). После правки файлов в `supabase/functions/assistant/` функцию нужно развернуть заново: `supabase functions deploy assistant --project-ref mhdulbsrtmcdxrzeamqk --no-verify-jwt`.
 Эталонный план заново: `node tools/make-base-plan.js` (около минуты), затем применить `tools/base-plan.sql` к базе и выложить `js/base-plan.js`.
 
 Весь остальной код написан для этого проекта.
