@@ -40,6 +40,20 @@ function ok(cond, text) { if (!cond) { fails++; console.log('  ОШИБКА: ' +
   console.log('   разобрано верно: ' + understood.filter(u => JSON.stringify(u.r.rows.map(A.line)) === JSON.stringify(u.p.expect)).length + ' из 20');
 
   // 2) плохие ответы модели
+  // Номер машины до утверждения не нужен: «один водитель заболел» — какую убрать, выбирает программа.
+  {
+    const n1 = U.normalize(JSON.stringify({ changes: [{ kind: 'vehicle_off', count: 2, cap: 4 }] }), 'plan', data.vehicles);
+    ok(n1.changes.length === 1 && n1.changes[0].count === 2 && n1.changes[0].cap === 4000 && !n1.questions.length, 'без номера: count 2, cap 4 т → 4000 кг, без вопроса: ' + JSON.stringify(n1));
+    const r1 = A.resolve(n1, data);
+    ok(r1.rows.length === 2 && r1.rows.every(r => r.kind === 'vehicle_off' && r.auto && data.vehicles.find(v => v.id === r.vehicleId).cap === 4000), 'без номера: две разные машины 4 т');
+    const n2 = U.normalize(JSON.stringify({ changes: [{ kind: 'vehicle_off', count: 99 }] }), 'plan', data.vehicles);
+    ok(!n2.changes.length && n2.questions.length, 'без номера: 99 машин — вопрос, а не действие');
+    const n3 = U.normalize(JSON.stringify({ changes: [{ kind: 'breakdown', count: 1 }] }), 'live', data.vehicles);
+    ok(!n3.changes.length && n3.questions.length, 'в идущем дне без номера нельзя: сломалась конкретная машина');
+    const r4 = A.resolve({ changes: [{ kind: 'vehicle_off', count: 3, cap: 1500 }] }, data);
+    ok(r4.rows.length === 1 && /меньше машин/.test(r4.questions.join(' ')), 'малых машин одна — убрана одна и сказано об этом');
+    console.log('   без номера машины: разобрано верно');
+  }
   console.log('2) плохие ответы модели');
   const bad = [
     ['не JSON', 'Конечно! Вот ответ: машина 3 не выходит'],

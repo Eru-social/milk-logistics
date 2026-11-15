@@ -68,9 +68,17 @@
 
   // ---------- ответ функции → строки карточки ----------
   // answer — { changes, questions } (уже проверено серверной функцией: understand.mjs). data — { orders, vehicles }.
-  function resolve(answer, data) {
-    var rows = [], questions = (answer && answer.questions || []).slice();
+  // opts.pick(count, cap) — какие машины убрать, если логист не назвал номер («один водитель заболел»):
+  // экран отдаёт наименее загруженные нужной вместимости. Без opts — последние по номеру на линии.
+  function resolve(answer, data, opts) {
+    var rows = [], questions = (answer && answer.questions || []).slice(), taken = {};
     (answer && answer.changes || []).forEach(function (c) {
+      if (c.kind === 'vehicle_off' && c.vehicle == null && c.count) {
+        var ids = (opts && opts.pick ? opts.pick(c.count + 16, c.cap) : autoPick(data, c.cap)).filter(function (id) { return !taken[id]; }).slice(0, c.count);
+        ids.forEach(function (id) { taken[id] = true; rows.push({ kind: 'vehicle_off', vehicleId: id, auto: true }); });
+        if (ids.length < c.count) questions.push('На линии меньше машин' + (c.cap ? ' по ' + (c.cap / 1000).toLocaleString('ru-RU') + ' т' : '') + ', чем сказано: убрал ' + ids.length + '.');
+        return;
+      }
       var r = { kind: c.kind };
       ['time', 'at', 'minutes', 'kg', 'factor', 'key', 'value', 'action', 'important'].forEach(function (f) { if (c[f] != null) r[f] = c[f]; });
       if (c.vehicle != null) r.vehicleId = c.vehicle;
@@ -78,6 +86,10 @@
       rows.push(r);
     });
     return { rows: rows, questions: questions };
+  }
+  function autoPick(data, cap) {
+    return (data.vehicles || []).filter(function (v) { return v.active !== false && (!cap || Math.abs(v.cap - cap) <= 50); })
+      .map(function (v) { return v.id; }).reverse();
   }
   function storeInto(r, query, data) {
     r.query = query;
@@ -176,7 +188,7 @@
   function rowHtml(r, i, data, opts) {
     var body, liveTime = !!(opts && opts.liveTime);
     switch (r.kind) {
-      case 'vehicle_off': body = vehicleSelect(i, r, data) + ' сегодня не выходит'; break;
+      case 'vehicle_off': body = vehicleSelect(i, r, data) + ' сегодня не выходит' + (r.auto ? ' <span class="pill">выбрала программа</span>' : ''); break;
       case 'vehicle_on': body = vehicleSelect(i, r, data) + ' выходит на линию'; break;
       case 'order_time': body = storeControl(i, r) + (r.important === false ? ': время не важно' : ': не раньше ' + field(i, 'time', r.time, 'time', 'Время')); break;
       case 'order_kg': body = storeControl(i, r) + ': вес ' + field(i, 'kg', r.kg, 'number', 'Вес, кг', ' min="0" step="10"') + ' кг' + (+r.kg === 0 ? ' — заказ отменён' : ''); break;
@@ -254,7 +266,7 @@
 
   // Правка одного поля строки карточки (общая для старого экрана и чата). r — строка, f — поле, v — значение из формы.
   function edit(r, f, v, data) {
-    if (f === 'vehicleId') r.vehicleId = +v;
+    if (f === 'vehicleId') { r.vehicleId = +v; r.auto = false; }
     else if (f === 'pick') r.pick = v === '' ? null : +v;
     else if (f === 'query') storeInto(r, v, data);
     else if (f === 'kg' || f === 'minutes' || f === 'factor') r[f] = +v;

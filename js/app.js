@@ -648,6 +648,15 @@
       variants: res.variants.map(function (v) { return { name: v.name, lines: v.lines, stats: v.stats, plan: v.plan, after: G.goals(v.plan, input(), plans.naive) }; }) };
   }
   // Чат: какую машину и какое время подставить в строку происшествия (как окно «Форс-мажор»: время по плану).
+  // «Один водитель заболел» без номера (до утверждения): убираем машины на линии нужной вместимости,
+  // сначала стоящие в гараже, потом наименее загруженные — так план меняется меньше всего. Возвращает номера по порядку.
+  function pickVehicles(count, cap) {
+    var load = {};
+    if (plans.best) plans.best.routes.forEach(function (r) { load[r.vehicle.id] = r.seq.length ? r.loadPct : -1; });
+    return state.vehicles.filter(function (v) { return v.active !== false && (!cap || Math.abs(v.cap - cap) <= 50); })
+      .sort(function (a, b) { return (load[a.id] || 0) - (load[b.id] || 0) || b.id - a.id; })
+      .map(function (v) { return v.id; }).slice(0, count);
+  }
   function liveVehicles() {
     if (!approved) return [];
     var base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), ids = [];
@@ -1084,8 +1093,9 @@
     chat = window.MilkChat.mount('chat', {
       data: input, live: isLive, busy: busy, toast: toast, vehicleOfOrder: vehicleOfOrder,
       openProposal: openProposal, proposal: function () { return proposal; }, proposalClick: proposalClick,
-      dropProposal: function () { dropProposal(); },
+      dropProposal: function (note) { dropProposal(null, note); },
       leastLoaded: function () { return window.MilkProposal.leastLoaded(plans.best); },
+      pickVehicles: pickVehicles,
       replan: replanFor, useVariant: useVariant, firstInRoute: firstInRoute, suggestAt: suggestAt,
       approve: function () { if (!busy()) approvePlan(); }, cancelDraft: cancelProposal,
       draftKey: function () { return draft ? planKey(draft) : ''; }, approval: approvalState

@@ -337,3 +337,4 @@ button, input { font: inherit; color: inherit; }
 .chat-hints { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .chat-hints span { color: var(--muted); font-size: 12px; width: 100%; }
 .chat-hints .btn { font-size: 12px; padding: 4px 8px; }
+.msg-fix { justify-self: start; font-size: 12px; }

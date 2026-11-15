@@ -15,7 +15,7 @@ export const LIVE_KINDS = ['breakdown', 'delay', 'stop_refuses', 'later'];
 export const SETTING_KEYS = ['serviceMin', 'smallServiceMin', 'smallStopKg', 'shiftMin', 'minLoadPct', 'fleetPriority', 'earliestDepart', 'trafficFactor'];
 // Какие поля оставляем у каждого вида. Всё остальное, что придумала модель, выбрасывается.
 const FIELDS = {
-  vehicle_off: ['vehicle'], vehicle_on: ['vehicle'],
+  vehicle_off: ['vehicle', 'count', 'cap'], vehicle_on: ['vehicle'],
   order_time: ['store', 'time', 'important'], order_kg: ['store', 'kg'], scale_kg: ['factor'],
   setting: ['key', 'value'],
   breakdown: ['vehicle', 'at'], delay: ['vehicle', 'at', 'minutes'],
@@ -48,6 +48,8 @@ export function systemPrompt(mode, vehicles) {
       '{"kind":"later","store":"Щорса","time":"14:00"} — магазин просит привезти не раньше этого времени.'
     ] : [
       '{"kind":"vehicle_off","vehicle":7} — машина сегодня не выходит (водитель заболел, машина в ремонте, сломалась — всё это сюда).',
+      '{"kind":"vehicle_off","count":2,"cap":4000} — то же, когда номер машины НЕ назван («один водитель заболел», «две четырёхтонки не выйдут»):',
+      '  count — сколько машин, cap — вместимость в кг, только если названа (4 т → 4000). Номер не спрашивай: какие машины убрать, выберет программа.',
       '{"kind":"vehicle_on","vehicle":7} — машина снова выходит на линию.',
       '{"kind":"order_time","store":"Щорса","time":"10:00"} — магазин просит привезти не раньше этого времени (он становится важной точкой).',
       '{"kind":"order_time","store":"Щорса","important":false} — время у магазина больше не важно.',
@@ -115,6 +117,14 @@ export function normalize(answer, mode, vehicles) {
         const id = Number(c[f]);
         if (!ids.has(id)) { bad = 'Машины № ' + str(c[f], 10) + ' нет в парке. Какая машина имелась в виду?'; break; }
         r.vehicle = id;
+      } else if (f === 'count') {
+        const n = Math.round(Number(c[f]));
+        if (!(n >= 1 && n <= ids.size)) { bad = 'Сколько машин не выходит?'; break; }
+        r.count = n;
+      } else if (f === 'cap') {
+        let n = Number(typeof c[f] === 'string' ? c[f].replace(',', '.') : c[f]);
+        if (isFinite(n) && n > 0 && n < 100) n = n * 1000;          // модель написала тонны
+        if (isFinite(n) && n > 0) r.cap = Math.round(n);
       } else if (f === 'store') r.store = str(c[f], 80);
       else if (f === 'important') r.important = c[f] !== false;
       else if (f === 'key') {
@@ -128,7 +138,10 @@ export function normalize(answer, mode, vehicles) {
       } else if (f === 'action') r.action = c[f] === 'drop' ? 'drop' : 'retry';
       else r[f] = str(c[f], 10);          // time, at — строкой; строго проверяет js/changes.js
     }
-    if (!bad && FIELDS[c.kind].indexOf('vehicle') >= 0 && r.vehicle == null) bad = 'Не понял, какая машина.';
+    // До утверждения номер машины не нужен: «одна машина не выходит» — какую убрать, выберет программа (js/assistant.js).
+    if (!bad && c.kind === 'vehicle_off' && r.vehicle != null) { delete r.count; delete r.cap; }
+    if (!bad && c.kind === 'vehicle_off' && r.vehicle == null && !r.count) r.count = 1;   // «водитель заболел» — одна машина
+    if (!bad && FIELDS[c.kind].indexOf('vehicle') >= 0 && r.vehicle == null && !(c.kind === 'vehicle_off' && r.count)) bad = 'Не понял, какая машина.';
     if (!bad && FIELDS[c.kind].indexOf('store') >= 0 && !r.store) bad = 'Не понял, какой магазин.';
     if (!bad && c.kind === 'setting' && (r.key == null || r.value == null)) bad = 'Не понял, какое правило поменять.';
     if (bad) { out.dropped.push(bad); if (out.questions.indexOf(bad) < 0) out.questions.push(bad); continue; }
