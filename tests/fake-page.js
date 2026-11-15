@@ -172,7 +172,7 @@ function makeServer(clock) {
 }
 
 // ---------- поддельная страница ----------
-// opts: { clock, server, net, storage, settings: {…поправки к MILK_SETTINGS до запуска} }
+// opts: { clock, server, net, storage, extra: [файлы до наших], settings: {…поправки к MILK_SETTINGS до запуска} }
 function makePage(opts) {
   opts = opts || {};
   const clock = opts.clock || makeClock(), storage = opts.storage || {};
@@ -200,7 +200,8 @@ function makePage(opts) {
   if (opts.server) win.supabase = { createClient: () => opts.server.client(opts.net) };
   const ctx = vm.createContext(win);
   const load = f => vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), ctx, { filename: f });
-  SCRIPTS.forEach(f => { load(f); if (f === 'js/settings.js' && opts.settings) Object.assign(win.MILK_SETTINGS, opts.settings); });
+  // opts.extra — файлы, которые на настоящей странице грузятся до наших (vendor/…/qrcode.js, js/base-roads.js).
+  (opts.extra || []).concat(SCRIPTS).forEach(f => { load(f); if (f === 'js/settings.js' && opts.settings) Object.assign(win.MILK_SETTINGS, opts.settings); });
   const fire = (id, type, target) => {
     const hs = (els[id] && els[id].handlers[type]) || [];
     if (!hs.length) throw new Error('нет обработчика ' + id + ':' + type);

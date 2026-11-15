@@ -372,7 +372,7 @@
   }
 
   function renderMap(p, fit, idx) {
-    var routes = [], marks = [], pending = 0, live = p.live, byOrder = {};
+    var routes = [], marks = [], pending = 0, failed = 0, live = p.live, byOrder = {};
     p.stops.forEach(function (s) { byOrder[s.orders[0].id] = s; });
     p.routes.forEach(function (r, k) {
       if (r.broken) {                      // крестик там, где стоит сломанная машина
@@ -392,7 +392,8 @@
             (st ? '<br>Статус: ' + esc(KIND[st].toLowerCase()) : '') });
       });
       if (!r.road) askRoad(p, r, path);
-      if (!r.road) pending++;
+      if (!r.road && !r.roadFailed) pending++;
+      if (r.roadFailed) failed++;
       routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null, open: !!r.broken, points: points, path: path });
     });
     window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes, marks: marks }, fit);
@@ -401,6 +402,7 @@
       'Таблицы дорог нет: расстояния оценены по прямой с поправкой ×' + String(state.settings.detour).replace('.', ',') + '.';
     if (live) note = 'День идёт: серые точки уже пройдены' + (marks.length ? ', крестик — сломанная машина' : '') + '. ' + note;
     if (pending) note = 'Прокладываю линии по улицам, осталось маршрутов: ' + pending + '. ' + note;
+    else if (failed) note = 'Сервер линий по улицам не ответил (нет интернета?): ' + plural(failed, 'маршрут показан', 'маршрута показаны', 'маршрутов показаны') + ' пунктиром, на расчёт это не влияет. ' + note;
     if (window.MilkMap.mode() === 'svg') note = 'Карта-подложка недоступна, показана схема. ' + note;
     $('map-note').textContent = note;
   }
@@ -413,7 +415,7 @@
     if (r.roadAsked) return;
     r.roadAsked = true;
     window.MilkMap.roadRoute(DATA.depot, pts, r.broken).then(function (res) {
-      if (!res) return;
+      if (!res) { r.roadFailed = true; if (plans[view] === p) { clearTimeout(mapTimer); mapTimer = setTimeout(function () { if (plans[view] === p) renderMap(p, false, eventIndex()); }, 80); } return; }
       r.road = res.coords;
       if (plans[view] !== p) return;
       clearTimeout(mapTimer);
