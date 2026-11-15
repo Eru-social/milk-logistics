@@ -175,7 +175,7 @@
       if (v.active === false) return;
       var r = null;
       if (plan) for (var i = 0; i < plan.routes.length; i++) if (plan.routes[i].vehicle.id === v.id) r = plan.routes[i];
-      html += '<button type="button" class="pick-btn" data-id="' + v.id + '"><b>' + esc(v.name) + '</b><small>' +
+      html += '<button type="button" class="pick-btn" data-id="' + v.id + '"><b>' + esc(v.name).replace(/ т$/, '&nbsp;т') + '</b><small>' +   // «4,6 т» не разрывается
         (r && r.seq.length ? r.seq.length + ' точек · выезд ' + clock(r.depart) : (plan ? 'в гараже' : '')) + '</small></button>';
     });
     app.innerHTML = html + '</div>';
@@ -243,7 +243,7 @@
     if (!d || d.roads || typeof document === 'undefined' || !document.createElement) return Promise.resolve(d);
     return new Promise(function (done) {
       var tag = document.createElement('script');
-      tag.src = 'js/roads.js?v=19';
+      tag.src = 'js/roads.js?v=20';
       tag.onload = function () { d.roads = window.MilkSolver.roadsFrom(window.MILK_ROADS); done(d); };
       tag.onerror = function () { done(d); };          // не загрузился — считаем по прямой, как раньше
       document.head.appendChild(tag);
