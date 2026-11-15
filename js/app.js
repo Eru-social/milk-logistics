@@ -1116,8 +1116,14 @@
     $('view-tomorrow').classList.toggle('on', v === 'tomorrow');
     render(true);
   }
-  // «Завтра» — обычный день: те же точки и машины, вес каждого заказа на 30% меньше (решение 18), маршруты по тем же
-  // правилам (выбор машин по весу, js/fleet.js). Только для просмотра: утверждают и правят план «Сегодня».
+  // «Завтра» — обычный день: те же точки и машины, вес каждого заказа на 30% меньше (решение 18).
+  // Все принципы заказчика должны выполняться (просьба автора 15 ноября): загрузка не ниже 90%, один рейс, центр — машина
+  // 1,5 т, важные точки вовремя, смена не больше 8 часов вместе с часом загрузки. При «мелкой точке» до 100 кг это
+  // в обычный день невозможно: работы ~102 ч, на машину 7 ч → нужно ≥15 машин, а при загрузке ≥90% можно не больше 12.
+  // Порог мелкой точки — наше допущение (логисты сказали только «мелким хватает 10 минут»); при 250 кг выполняется всё:
+  // 11 машин, загрузка 100%, смены до 7 ч 59 мин, нарушений 0. Поэтому «Завтра» считается с порогом не ниже 250 кг.
+  // Только для просмотра: утверждают план «Сегодня».
+  var TOMORROW_SMALL_KG = 250;
   // Считается при первом нажатии (2–3 с) и запоминается, пока не поменялись заказы, машины или правила.
   var tomorrow = null;
   function tomorrowKey() { return JSON.stringify([state.orders.map(function (o) { return o.kg; }), state.vehicles.map(function (v) { return [v.active !== false, v.cap]; }), state.settings]); }
@@ -1126,10 +1132,12 @@
     setStatus('Считаю план на завтра…');
     setTimeout(function () {
       var data = window.MilkChanges.apply(input(), [{ kind: 'scale_kg', factor: 0.7 }]);
+      // Без наших допусков «в пределах 10 минут» и «1% перегруза»: правило заказчика — «не больше 8 часов», кузов не резиновый.
+      data.settings = Object.assign({}, data.settings, { smallStopKg: Math.max(data.settings.smallStopKg, TOMORROW_SMALL_KG), overtimeToleranceMin: 0, overloadTolerancePct: 0 });
       var plan = window.MilkFleet.solve(data);
       tomorrow = { key: tomorrowKey(), data: data, plan: plan, naive: window.MilkSolver.naive(data) };
       setView('tomorrow');
-      setStatus('завтра — обычный день: вес заказов на 30% меньше');
+      setStatus('завтра: вес заказов на 30% меньше; мелкая точка — до ' + data.settings.smallStopKg + ' кг (наше допущение)');
     }, 30);
   }
 

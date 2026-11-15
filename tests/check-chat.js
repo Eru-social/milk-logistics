@@ -229,8 +229,12 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     const kpiToday = P.text('kpis');
     P.fire('view-tomorrow', 'click'); await tick(500);
     const k = P.text('kpis'), used = +(/Количество транспорта<\/span><span class="kpi-value">(\d+)/.exec(k) || [])[1];
-    ok(/44,[56] т/.test(k) && used >= 10 && used <= 14, 'завтра: вес 44,5 т, машин ' + used + ' (по весу, остальные в гараже)');
-    ok(/В гараже: /.test(P.text('routes')) && P.el('btn-approve').disabled, 'завтра: машины в гараже видны, «Утвердить» закрыто (только просмотр)');
+    const kt = k.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    ok(/44,[56] т/.test(k) && used >= 11 && used <= 12, 'завтра: вес 44,6 т, машин ' + used + ' (по весу, остальные в гараже)');
+    ok(/Переработки нет/.test(kt) && /— в норме 8 ч/.test(kt) && /10 из 10 важных вовремя/.test(kt), 'завтра: смена не больше 8 часов, важные вовремя: ' + kt.slice(-160));
+    ok(/Все правила соблюдены/.test(P.text('problems')), 'завтра: все принципы заказчика выполнены: ' + P.text('problems').replace(/<[^>]+>/g, ' ').slice(0, 200));
+    ok(/мелкая точка — до 250 кг/.test(P.el('status').textContent), 'завтра: допущение о мелкой точке видно');
+    ok(P.el('btn-approve').disabled, 'завтра: «Утвердить» закрыто (только просмотр)');
     clean('завтра');
     P.fire('view-best', 'click'); await tick();
     ok(P.text('kpis') === kpiToday, '«Сегодня» вернуло план дня максимальной загрузки');
