@@ -76,6 +76,8 @@
       var t = chk.ok ? chk.list.map(function (c) { return C.describe(c, d); }).join('; ') : (A.KIND_NAMES[r.kind] || r.kind) + ': ' + chk.errors.join('; ');
       return t + (r.auto ? ' (какую — выбрала программа: номер не важен)' : '');
     }
+    // Что уже понято, словами — с точным магазином и машиной. Для «Понял не так — поправить»: ИИ получает это и поправку,
+    // и не переспрашивает то, что логист уже уточнил («какой магазин на Щорса»).
     function summaryText(a) { var d = api.data(); return a.rows.map(function (r) { return rowText(r, d).replace(/ \(какую — выбрала.*\)$/, ''); }).join('. '); }
     function summaryHtml(a, note) {
       var d = api.data();
@@ -267,13 +269,13 @@
             var html = P.card(p);
             api.dropProposal();
             push({ who: 'ai', kind: 'proposal', open: false, last: html, note: 'Поправьте и напишите снова.' });
-          } else if (p) push({ who: 'ai', kind: 'proposal', open: true, rows: rows, text: a.text || summaryText(a) });
+          } else if (p) push({ who: 'ai', kind: 'proposal', open: true, rows: rows, text: summaryText(a) });
           draw();
         });
         return;
       }
       // Идущий день: каждое происшествие считается от утверждённого плана, поэтому по очереди (решение 5).
-      var d = api.data(), said = a.text || summaryText(a);
+      var d = api.data(), said = summaryText(a);
       queue = a.rest || [];                 // после «поправить» остальные происшествия той же фразы ждут своей очереди
       var mine = [];
       a.rows.forEach(function (r) {

@@ -70,7 +70,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(/Понял не так — поправляю/.test(log()) && /Что не так\? Напишите/.test(lastMsg()) && !/prop-apply/.test(log()) && !/data-field=/.test(log()), '«Понял не так»: расчёт закрыт, вопрос словами, без формы');
   answer([{ kind: 'vehicle_off', vehicle: 16 }]);
   await send('убери шестнадцатую');
-  ok(/^.+ сегодня не выходит\. Поправка: убери шестнадцатую$/.test(P.lastBody.text), 'поправка ушла в ИИ вместе с первой фразой: ' + P.lastBody.text);
+  ok(/^Машина \d+ сегодня не выходит\. Поправка: убери шестнадцатую$/.test(P.lastBody.text), 'поправка ушла в ИИ вместе с тем, что понято: ' + P.lastBody.text);
   ok(/Машина 16 сегодня не выходит/.test(log()) && /prop-apply/.test(log()), 'после поправки — новый расчёт');
   click('prop-apply'); await tick(1000);
   ok(/Применено: новый черновик/.test(log()) && !/prop-apply/.test(log()), 'после «Применить» в чате «Применено»');
@@ -97,6 +97,11 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   await send('У машин 3 и 9 водители заболели, магазин на Щорса просит после 10');
   await send('на 26');
   ok(/prop-apply/.test(lastMsg()) && /«Магазин №8\/Щорса\/» \(Щорса 26\)/.test(lastMsg()), 'ответ «на 26» → тот же магазин №8');
+  click('', { 'data-act': 'fix', 'data-msg': actMsg('fix') }); await tick();
+  answer([{ kind: 'vehicle_off', vehicle: 3 }, { kind: 'vehicle_off', vehicle: 7 }, { kind: 'order_time', store: 'Магазин №8 Щорса 26', time: '10:00' }]);
+  await send('не девятая, а седьмая');
+  ok(/Магазин №8\/Щорса\/» \(Щорса 26\).*Поправка: не девятая, а седьмая$/.test(P.lastBody.text), 'в поправку ушёл уже уточнённый магазин: ' + P.lastBody.text);
+  ok(/prop-apply/.test(lastMsg()) && /Машина 7 сегодня не выходит/.test(lastMsg()) && !/Какой из них/.test(lastMsg()), 'после поправки магазин не переспрашивается, сразу расчёт');
   click('', { 'data-hint': 'unload25' }); await tick();
   ok(/Открыто предложение/.test(P.el('toast').textContent), 'вторая подсказка при открытом предложении: «сначала Применить или Отменить»');
   click('prop-cancel'); await tick();
