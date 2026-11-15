@@ -43,7 +43,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
 
   // ---------- 1. Открытие ----------
   console.log('1. Новый экран открывается');
-  ok(/Напишите, что изменилось на завтра/.test(log()), 'чат поздоровался: ' + log().slice(0, 120));
+  ok(/Напишите, что изменилось\. Я пойму/.test(log()), 'чат поздоровался: ' + log().slice(0, 120));
   ok(/data-hint="normal"/.test(P.text('ch-hints')) && /data-hint="minus1"/.test(P.text('ch-hints')), 'подсказки «А если…» под полем');
   ok(P.el('btn-incident').hidden === true, 'кнопки «Форс-мажор» нет');
   ok(P.text('whatif') === '' && P.text('proposal') === '' && P.text('assistant') === '', 'старые блоки пустые');
@@ -219,7 +219,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(/data-act="approve"/.test(lastMsg()) || /msg-error/.test(lastMsg()) || /Какой из них/.test(lastMsg()), 'ответ «Суворова 216» разобран: ' + lastMsg().replace(/<[^>]+>/g, ' ').slice(0, 160));
   clean('день идёт');
   P.fire('btn-reset', 'click'); await tick(1000);
-  ok(/Напишите, что изменилось на завтра/.test(log()) && !/Утверждено в/.test(log()), 'после сброса чат чистый');
+  ok(/Напишите, что изменилось\. Я пойму/.test(log()) && !/Утверждено в/.test(log()), 'после сброса чат чистый');
   ok(/data-hint="normal"/.test(P.text('ch-hints')), 'после сброса — подсказки «до утверждения»');
 
   // ---------- 8. Два экрана ----------
