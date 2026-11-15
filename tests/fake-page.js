@@ -8,7 +8,7 @@
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const DIR = path.join(__dirname, '..');
 const SCRIPTS = ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js',
-  'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/map.js', 'js/app.js'];
+  'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/chat.js', 'js/map.js', 'js/app.js'];
 
 // ---------- общие часы ----------
 // Время = настоящее время с запуска + сдвиг, который добавляет advance. Решатель видит, как идут настоящие
@@ -172,7 +172,8 @@ function makeServer(clock) {
 }
 
 // ---------- поддельная страница ----------
-// opts: { clock, server, net, storage, extra: [файлы до наших], settings: {…поправки к MILK_SETTINGS до запуска} }
+// opts: { clock, server, net, storage, extra: [файлы до наших], settings: {…поправки к MILK_SETTINGS до запуска},
+//         search: адрес после «?» — по умолчанию '?old=1' (старый экран без чата; новый экран с чатом — search: '') }
 function makePage(opts) {
   opts = opts || {};
   const clock = opts.clock || makeClock(), storage = opts.storage || {};
@@ -193,7 +194,7 @@ function makePage(opts) {
   }
   const document = { getElementById: el, querySelectorAll: () => [], addEventListener() {}, createElement: () => el('tmp' + Math.random()), activeElement: null };
   const localStorage = { getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }, removeItem: k => { delete storage[k]; } };
-  const win = { document, localStorage, location: { href: 'http://x/index.html', protocol: 'http:' }, navigator: { onLine: true }, console,
+  const win = { document, localStorage, location: { href: 'http://x/index.html' + (opts.search == null ? '?old=1' : opts.search), search: opts.search == null ? '?old=1' : opts.search, protocol: 'http:' }, navigator: { onLine: true }, console,
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, Promise, Date: clock.Date, Math, JSON, URL, AbortController,
     fetch: () => Promise.reject(new Error('нет сети')), scrollTo() {} };
   win.window = win; win.globalThis = win;

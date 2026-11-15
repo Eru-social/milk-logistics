@@ -172,8 +172,9 @@
   function field(i, name, value, type, label, extra) {
     return '<input type="' + type + '" data-row="' + i + '" data-field="' + name + '" value="' + esc(value == null ? '' : value) + '" aria-label="' + label + '"' + (extra || '') + '>';
   }
-  function rowHtml(r, i, data) {
-    var body;
+  // opts (чат, js/chat.js): { liveTime: поле «когда» у происшествий, goLabel: надпись на главной кнопке }.
+  function rowHtml(r, i, data, opts) {
+    var body, liveTime = !!(opts && opts.liveTime);
     switch (r.kind) {
       case 'vehicle_off': body = vehicleSelect(i, r, data) + ' сегодня не выходит'; break;
       case 'vehicle_on': body = vehicleSelect(i, r, data) + ' выходит на линию'; break;
@@ -188,17 +189,19 @@
             '<option value="overtime"' + (r.value === 'overtime' ? ' selected' : '') + '>без переработки</option></select>'
           : field(i, 'value', r.value, 'text', 'Значение', ' size="6"'));
         break;
-      case 'breakdown': body = vehicleSelect(i, r, data) + ' сломалась' + (r.at ? ' в ' + esc(r.at) : ', время — по плану (поправите в окне)'); break;
+      case 'breakdown': body = vehicleSelect(i, r, data) + ' сломалась' + (liveTime ? '' : (r.at ? ' в ' + esc(r.at) : ', время — по плану (поправите в окне)')); break;
       case 'delay': body = vehicleSelect(i, r, data) + ' задерживается на ' + field(i, 'minutes', r.minutes, 'number', 'Минут', ' min="5" step="5"') + ' мин'; break;
       case 'stop_refuses': body = storeControl(i, r) + ' не принимает: <select data-row="' + i + '" data-field="action"><option value="retry"' + (r.action !== 'drop' ? ' selected' : '') +
         '>вернуться позже</option><option value="drop"' + (r.action === 'drop' ? ' selected' : '') + '>не везти сегодня</option></select>'; break;
       case 'later': body = storeControl(i, r) + ': привезти не раньше ' + field(i, 'time', r.time, 'time', 'Время'); break;
       default: body = esc(r.kind);
     }
+    // В чате окна «Форс-мажор» нет, поэтому время происшествия правится прямо в строке (по плану, а не по часам на стене).
+    if (liveTime && LIVE_KINDS.indexOf(r.kind) >= 0) body += '<span class="as-at"> · когда, по плану: ' + field(i, 'at', r.at || '', 'time', 'Когда, по плану') + '</span>';
     return '<li><span class="as-kind">' + esc(KIND_NAMES[r.kind] || r.kind) + '</span><span class="as-body">' + body + '</span>' +
       '<button type="button" class="as-del" data-del="' + i + '" title="Убрать строку" aria-label="Убрать строку">×</button></li>';
   }
-  function card(a, data) {
+  function card(a, data, opts) {
     if (!a || (!a.rows && !a.message && !(a.queue && a.queue.length))) return '';
     var html = '<div class="as-card">';
     if (a.queue && a.queue.length) {
@@ -209,13 +212,13 @@
     if (a.message) html += '<p class="fm-error">' + esc(a.message) + '</p>';
     if (a.rows) {
       html += '<b>' + (a.manual ? 'Заполните вручную' : 'Я понял так') + '</b>';
-      if (a.rows.length) html += '<ol class="as-rows">' + a.rows.map(function (r, i) { return rowHtml(r, i, data); }).join('') + '</ol>';
+      if (a.rows.length) html += '<ol class="as-rows">' + a.rows.map(function (r, i) { return rowHtml(r, i, data, opts); }).join('') + '</ol>';
       if (a.questions && a.questions.length) html += '<ul class="as-questions">' + a.questions.map(function (q) { return '<li>' + esc(q) + '</li>'; }).join('') + '</ul>';
       var kinds = a.mode === 'live' ? LIVE_KINDS : PLAN_KINDS;
       html += '<div class="as-add"><select id="as-add-kind" aria-label="Вид изменения">' + kinds.map(function (k) { return '<option value="' + k + '">' + esc(KIND_NAMES[k]) + '</option>'; }).join('') +
         '</select><button type="button" class="btn" id="as-add">Добавить строку</button></div>' +
         '<div class="proposal-actions"><button type="button" class="btn" id="as-cancel">Отменить</button>' +
-        '<button type="button" class="btn primary" id="as-go"' + (a.rows.length ? '' : ' disabled') + '>' + (a.mode === 'live' ? 'Разобрать в окне «Форс-мажор»' : 'Посчитать предложение') + '</button></div>';
+        '<button type="button" class="btn primary" id="as-go"' + (a.rows.length ? '' : ' disabled') + '>' + (opts && opts.goLabel ? esc(opts.goLabel) : (a.mode === 'live' ? 'Разобрать в окне «Форс-мажор»' : 'Посчитать предложение')) + '</button></div>';
     } else html += '<div class="proposal-actions"><button type="button" class="btn" id="as-cancel">Закрыть</button></div>';
     return html + '</div>';
   }
@@ -247,6 +250,17 @@
       });
     }).catch(function () { return { ok: false, message: 'Модель недоступна. Заполните строки вручную.' }; });
     return Promise.race([req, timeout]).then(function (r) { clearTimeout(timer); return r; });
+  }
+
+  // Правка одного поля строки карточки (общая для старого экрана и чата). r — строка, f — поле, v — значение из формы.
+  function edit(r, f, v, data) {
+    if (f === 'vehicleId') r.vehicleId = +v;
+    else if (f === 'pick') r.pick = v === '' ? null : +v;
+    else if (f === 'query') storeInto(r, v, data);
+    else if (f === 'kg' || f === 'minutes' || f === 'factor') r[f] = +v;
+    else if (f === 'key') { r.key = v; r.value = v === 'fleetPriority' ? 'overtime' : data.settings[v]; if (typeof r.value === 'number' && (v === 'earliestDepart')) r.value = clock(r.value); }
+    else if (f === 'value') r.value = r.key === 'fleetPriority' || r.key === 'earliestDepart' ? v : (isFinite(+String(v).replace(',', '.')) ? +String(v).replace(',', '.') : v);
+    else r[f] = v;
   }
 
   // ---------- подключение к экрану ----------
@@ -308,14 +322,7 @@
     root.addEventListener('change', function (e) {
       var t = e.target, i = t.getAttribute('data-row'), f = t.getAttribute('data-field');
       if (i == null || !a || !a.rows || !a.rows[+i]) return;
-      var r = a.rows[+i], v = t.value;
-      if (f === 'vehicleId') r.vehicleId = +v;
-      else if (f === 'pick') r.pick = v === '' ? null : +v;
-      else if (f === 'query') storeInto(r, v, api.data());
-      else if (f === 'kg' || f === 'minutes' || f === 'factor') r[f] = +v;
-      else if (f === 'key') { r.key = v; r.value = v === 'fleetPriority' ? 'overtime' : api.data().settings[v]; if (typeof r.value === 'number' && (v === 'earliestDepart')) r.value = clock(r.value); }
-      else if (f === 'value') r.value = r.key === 'fleetPriority' || r.key === 'earliestDepart' ? v : (isFinite(+String(v).replace(',', '.')) ? +String(v).replace(',', '.') : v);
-      else r[f] = v;
+      edit(a.rows[+i], f, t.value, api.data());
       draw();
     });
     refresh();
@@ -323,7 +330,8 @@
   }
 
   var api = { findStores: findStores, resolve: resolve, toChanges: toChanges, toIncidents: toIncidents, blockers: blockers,
-    line: line, card: card, ask: ask, mount: mount, emptyRow: emptyRow, EXAMPLES: EXAMPLES };
+    line: line, card: card, ask: ask, mount: mount, emptyRow: emptyRow, edit: edit, picked: picked, needsStore: needsStore,
+    EXAMPLES: EXAMPLES, KIND_NAMES: KIND_NAMES, LIVE_KINDS: LIVE_KINDS, MAX_TEXT: MAX_TEXT };
   if (typeof window !== 'undefined') window.MilkAssistant = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

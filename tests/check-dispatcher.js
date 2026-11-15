@@ -1,4 +1,5 @@
 // Прогон экрана диспетчера и страницы водителя без браузера: простая подделка страницы.
+// Здесь — старый экран (index.html?old=1: «Что изменилось?», «А если…», «Форс-мажор»); новый экран с чатом — tests/check-chat.js.
 // Цель — убедиться, что ни одно действие не падает с ошибкой. Вёрстку этот прогон не видит.
 const dir = process.argv[2] || require('path').join(__dirname, '..'), fs = require('fs'), vm = require('vm');
 function makeWorld(storage) {
@@ -17,7 +18,7 @@ function makeWorld(storage) {
   const document = { getElementById: el, querySelectorAll: () => [], addEventListener() {}, createElement: () => el('tmp' + Math.random()), activeElement: null };
   const localStorage = { getItem: k => storage[k] || null, setItem: (k, v) => { storage[k] = String(v); }, removeItem: k => { delete storage[k]; } };
   const timers = [];
-  const win = { document, localStorage, location: { href: 'http://x/index.html', protocol: 'http:' }, navigator: {}, console,
+  const win = { document, localStorage, location: { href: 'http://x/index.html?old=1', search: '?old=1', protocol: 'http:' }, navigator: {}, console,
     setTimeout: (f, ms) => { timers.push(f); return timers.length; }, clearTimeout: i => { if (i) timers[i - 1] = null; },
     Promise, Date, Math, JSON, URL, AbortController, fetch: () => Promise.reject(new Error('нет сети')), scrollTo() {} };
   win.window = win; win.globalThis = win;
@@ -31,7 +32,7 @@ function makeWorld(storage) {
 (async () => {
   const storage = {};
   const A = makeWorld(storage);
-  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/map.js', 'js/app.js'].forEach(A.load);
+  ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js', 'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/chat.js', 'js/map.js', 'js/app.js'].forEach(A.load);
   await A.flush();
   const text = id => A.el(id).innerHTML || A.el(id).textContent;
   console.log('диспетчер открыт без сервера:', A.el('conn').textContent, '|', A.el('status').textContent);

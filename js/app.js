@@ -19,6 +19,10 @@
   var view = 'best', selected = -1, mapTimer = null;
   var solveTimer = null, remoteTimer = null, fallbackTimer = null, toastTimer = null;
   var remoteData = false, remoteStructure = false;
+  // Старый экран (до чата, 15 ноября вечером): index.html?old=1. Там прежние блоки «Что изменилось?», «А если…»
+  // и кнопка «Форс-мажор»; без ?old=1 вместо них в правой колонке один чат (js/chat.js). Расчёты у обоих одинаковые.
+  var OLD = /[?&]old=1(&|$)/.test((window.location && window.location.search) || '');
+  var chat = null;                         // чат с ИИ (js/chat.js), только на новом экране
 
   function $(id) { return document.getElementById(id); }
   function clone(x) { return JSON.parse(JSON.stringify(x)); }
@@ -240,7 +244,7 @@
     // Переработку не прячем: если машины, выбранные по весу, не укладываются в смену, логист видит это здесь
     // и рядом — где взять второй вариант (кнопку «а если» для него сделает этап 1Б).
     var hint = fleet && fleet.overtimeHint ? '<p class="problems-hint">Без переработки нужно больше машин — это второй вариант: ' +
-      'кнопка «Без переработки, машин сколько нужно» в блоке «А если…».</p>' : '';
+      (OLD ? 'кнопка «Без переработки, машин сколько нужно» в блоке «А если…».' : 'подсказка «Без переработки, машин сколько нужно» под полем чата.') + '</p>' : '';
     $('problems').innerHTML = '<div class="problems has"><b>Что не сходится</b><ul>' + items + '</ul>' + hint + '</div>';
   }
   // Одна строка над маршрутами: почему машин столько (текст собирает js/fleet.js).
@@ -490,27 +494,35 @@
   var FM_TYPES = [['breakdown', 'Сломалась машина'], ['delay', 'Задержка в пути'], ['stop', 'Точка не принимает'], ['later', 'Просят другое время']];
   function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
 
-  function openIncident(pre) {
-    if (!approved) { toast('Сначала утвердите план: перестраивать можно только маршруты, по которым машины уже едут.', 'warn'); return; }
+  // Подготовка происшествия: утверждённый план, машины в рейсе, время по плану. Общая для окна «Форс-мажор» и чата.
+  // Возвращает { error } без base, если перестраивать нечего, иначе состояние окна (в нём может быть error про точку).
+  function prepIncident(pre) {
+    if (!approved) return { error: 'Сначала утвердите план: перестраивать можно только маршруты, по которым машины уже едут.' };
     var base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), ids = [];
     base.routes.forEach(function (r) { if (r.seq.length && !r.broken) ids.push(r.vehicle.id); });
-    if (!ids.length) { toast('Нет машин в рейсе: перестраивать нечего.', 'warn'); return; }
+    if (!ids.length) return { error: 'Нет машин в рейсе: перестраивать нечего.' };
     pre = pre || {};
     // Этап 2: команда словами заранее заполняет окно (pre). Машина не в рейсе — молча брать другую нельзя.
     if (pre.vehicleId && ids.indexOf(pre.vehicleId) < 0) {
       var pv = vehicleById(pre.vehicleId);
-      toast((pv ? pv.name : 'Машина ' + pre.vehicleId) + ' сейчас не в рейсе: перестраивать нечего.', 'warn'); return;
+      return { error: (pv ? pv.name : 'Машина ' + pre.vehicleId) + ' сейчас не в рейсе: перестраивать нечего.' };
     }
     var open = selected >= 0 && plans.best.routes[selected] ? plans.best.routes[selected].vehicle.id : 0;
     var id = ids.indexOf(pre.vehicleId) >= 0 ? pre.vehicleId : (ids.indexOf(open) >= 0 ? open : ids[0]);
-    fm = { type: pre.type || 'breakdown', vehicleId: id, delayMin: pre.delayMin || 40, orderId: pre.orderId || 0, action: pre.action || 'retry', laterAt: pre.laterAt || 0,
+    var f = { type: pre.type || 'breakdown', vehicleId: id, delayMin: pre.delayMin || 40, orderId: pre.orderId || 0, action: pre.action || 'retry', laterAt: pre.laterAt || 0,
       base: base, marks: eventIndex().byStop, ids: ids, result: null, error: '', draftChanged: approvalState() === 'changed' };
-    fm.at = pre.at != null ? pre.at : window.MilkReplan.suggestTime(base, id, fm.marks, nowMin());
-    if (pre.orderId && (fm.type === 'stop' || fm.type === 'later') &&
-        !window.MilkReplan.status(base, id, fm.at, fm.marks).remaining.some(function (x) { return x.orderId === pre.orderId; })) {
+    f.at = pre.at != null ? pre.at : window.MilkReplan.suggestTime(base, id, f.marks, nowMin());
+    if (pre.orderId && (f.type === 'stop' || f.type === 'later') &&
+        !window.MilkReplan.status(base, id, f.at, f.marks).remaining.some(function (x) { return x.orderId === pre.orderId; })) {
       var po = orderById(pre.orderId);
-      fm.error = 'Точки «' + (po ? po.name : pre.orderId) + '» нет среди оставшихся у этой машины к ' + clock(fm.at) + '. Проверьте время и точку.';
+      f.error = 'Точки «' + (po ? po.name : pre.orderId) + '» нет среди оставшихся у этой машины к ' + clock(f.at) + '. Проверьте время и точку.';
     }
+    return f;
+  }
+  function openIncident(pre) {
+    var f = prepIncident(pre);
+    if (!f.base) { toast(f.error, 'warn'); return; }
+    fm = f;
     renderIncident();
     $('fm-overlay').hidden = false;
   }
@@ -607,14 +619,50 @@
   }
   function pickVariant(n) {
     var v = fm.result.variants[n];
+    closeIncident();
+    useVariant(v);
+    toast('Вариант «' + v.name + '» показан на карте. Проверьте и нажмите «Утвердить»: тогда его увидят водители.');
+  }
+  // Вариант перестроения становится черновиком (окно «Форс-мажор» и чат).
+  function useVariant(v) {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer);
     plans.best = v.plan;
     shareDraft();
-    closeIncident();
     selected = -1;
     if (view !== 'best') setView('best'); else render(true);
     setStatus('перестроение за ' + num(v.plan.ms / 1000, 2) + ' с');
-    toast('Вариант «' + v.name + '» показан на карте. Проверьте и нажмите «Утвердить»: тогда его увидят водители.');
+  }
+  // Чат: происшествие идущего дня → варианты перестроения (тот же расчёт, что в окне «Форс-мажор», только без окна).
+  // pre — как у окна: { type, vehicleId, orderId, at, delayMin, action, laterAt }. Ничего не меняет на экране и в базе.
+  function replanFor(pre) {
+    var f = prepIncident(pre);
+    if (!f.base || f.error) return { ok: false, message: f.error };
+    if ((f.type === 'stop' || f.type === 'later') && !f.orderId) return { ok: false, message: 'Не указано, какая точка.' };
+    if (f.type === 'later' && !f.laterAt) f.laterAt = Math.ceil((f.at + state.settings.retryMin) / 30) * 30;
+    var info = window.MilkReplan.status(f.base, f.vehicleId, f.at, f.marks);
+    var res = window.MilkReplan.propose(input(), f.base, { type: f.type, vehicleId: f.vehicleId, at: f.at, delayMin: f.delayMin,
+      orderId: f.orderId, action: f.action, retryAt: f.laterAt }, f.marks);
+    if (!res.ok) return { ok: false, message: res.message };
+    var G = window.MilkProposal;
+    return { ok: true, title: res.variants[0].title, status: info.text, before: G.goals(f.base, input(), plans.naive),
+      variants: res.variants.map(function (v) { return { name: v.name, lines: v.lines, stats: v.stats, plan: v.plan, after: G.goals(v.plan, input(), plans.naive) }; }) };
+  }
+  // Чат: какую машину и какое время подставить в строку происшествия (как окно «Форс-мажор»: время по плану).
+  function liveVehicles() {
+    if (!approved) return [];
+    var base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), ids = [];
+    base.routes.forEach(function (r) { if (r.seq.length && !r.broken) ids.push(r.vehicle.id); });
+    return { base: base, ids: ids };
+  }
+  function firstInRoute() {
+    var lv = liveVehicles(), open = selected >= 0 && plans.best.routes[selected] ? plans.best.routes[selected].vehicle.id : 0;
+    if (!lv.ids || !lv.ids.length) return null;
+    return lv.ids.indexOf(open) >= 0 ? open : lv.ids[0];
+  }
+  function suggestAt(vehicleId) {
+    var lv = liveVehicles();
+    if (!lv.base || !vehicleId) return '';
+    return clock(window.MilkReplan.suggestTime(lv.base, vehicleId, eventIndex().byStop, nowMin()));
   }
   function cancelProposal() {
     if (!approved) return;
@@ -657,14 +705,16 @@
     var sel = $('whatif-vehicle'), vid = sel && +sel.value ? +sel.value : window.MilkProposal.leastLoaded(plans.best);
     openProposal(window.MilkProposal.scenario(key, input(), vid));
   }
-  function dropProposal(message) {
+  function dropProposal(message, chatNote) {
     if (!proposal) return;
+    if (chat) chat.closeProposal(chatNote || message || 'Предложение закрыто.');
     proposal = null; render(true);
     if (message) toast(message, 'warn');
   }
   function applyProposal() {
     var pr = proposal;
     if (!pr || !pr.ok) return dropProposal();
+    if (chat) chat.closeProposal('Применено: новый черновик виден на всех экранах. Водители увидят его после «Утвердить план».');
     proposal = null;
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
     var before = state;
@@ -678,7 +728,23 @@
       toast('Изменения применены: новый черновик виден на всех экранах. Водители увидят его после «Утвердить».');
     });
   }
+  // Кнопки карточки предложения: вариант, «Применить», «Отменить» (в блоке #proposal старого экрана или в чате).
+  function proposalClick(e) {
+    var vb = e.target.closest && e.target.closest('[data-variant]');
+    if (vb && proposal) { window.MilkProposal.choose(proposal, +vb.getAttribute('data-variant')); selected = -1; render(true); return; }
+    if (e.target.id === 'prop-apply') applyProposal();
+    if (e.target.id === 'prop-cancel') {
+      dropProposal(null, 'Отменено: показан прежний план, в базе ничего не менялось.');
+      toast('Предложение отменено: показан прежний план, в базе ничего не менялось.');
+    }
+  }
   function renderProposal() {
+    if (!OLD) {                                    // новый экран: «а если» и предложение живут в чате
+      $('whatif').innerHTML = ''; $('proposal').innerHTML = '';
+      $('map-flag').hidden = !(proposal && proposal.ok);
+      if (chat) chat.refresh();
+      return;
+    }
     var day = !!approved || !!liveOf(draft);       // идущий день: с начала дня считать нельзя, кнопок «а если» нет
     $('whatif').innerHTML = day || proposal || !plans.best ? '' : window.MilkProposal.whatIf(plans.best, input());
     $('proposal').innerHTML = window.MilkProposal.card(proposal);
@@ -964,12 +1030,7 @@
       var b = e.target.closest('button');
       if (b && b.hasAttribute('data-whatif')) whatIfKey(b.getAttribute('data-whatif'));
     });
-    $('proposal').addEventListener('click', function (e) {
-      var vb = e.target.closest && e.target.closest('[data-variant]');
-      if (vb && proposal) { window.MilkProposal.choose(proposal, +vb.getAttribute('data-variant')); selected = -1; render(true); return; }
-      if (e.target.id === 'prop-apply') applyProposal();
-      if (e.target.id === 'prop-cancel') { dropProposal(); toast('Предложение отменено: показан прежний план, в базе ничего не менялось.'); }
-    });
+    $('proposal').addEventListener('click', proposalClick);
     $('incident').addEventListener('click', function (e) {
       if (e.target.id === 'inc-approve') approvePlan();
       if (e.target.id === 'inc-cancel') cancelProposal();
@@ -977,7 +1038,10 @@
     $('feed').addEventListener('click', function (e) {
       var id = e.target.getAttribute('data-event');
       if (!id) return;
-      for (var i = 0; i < events.length; i++) if (String(events[i].id) === id) return openIncident(incidentFromEvent(events[i]));
+      for (var i = 0; i < events.length; i++) if (String(events[i].id) === id) {
+        if (chat) return chat.fromEvent(incidentFromEvent(events[i]), eventText(events[i]));   // новый экран: в чат
+        return openIncident(incidentFromEvent(events[i]));
+      }
     });
     $('fm-body').addEventListener('click', function (e) {
       var b = e.target.closest('button');
@@ -1007,10 +1071,26 @@
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { $('qr-overlay').hidden = true; if (fm) closeIncident(); } });
     $('btn-reset').addEventListener('click', resetDemo);
     // Команда словами: режим (до утверждения или день идёт) определяет программа, а не логист (решение 5).
-    assistant = window.MilkAssistant.mount('assistant', {
-      data: input, live: function () { return !!approved || !!liveOf(draft); }, busy: busy, toast: toast,
-      openProposal: openProposal, openIncident: function (pre) { if (!busy()) openIncident(pre); }, vehicleOfOrder: vehicleOfOrder
+    function isLive() { return !!approved || !!liveOf(draft); }
+    if (OLD) {
+      assistant = window.MilkAssistant.mount('assistant', {
+        data: input, live: isLive, busy: busy, toast: toast,
+        openProposal: openProposal, openIncident: function (pre) { if (!busy()) openIncident(pre); }, vehicleOfOrder: vehicleOfOrder
+      });
+      return;
+    }
+    // Новый экран: один чат вместо «Что изменилось?», «А если…» и кнопки «Форс-мажор» (js/chat.js).
+    $('btn-incident').hidden = true;
+    chat = window.MilkChat.mount('chat', {
+      data: input, live: isLive, busy: busy, toast: toast, vehicleOfOrder: vehicleOfOrder,
+      openProposal: openProposal, proposal: function () { return proposal; }, proposalClick: proposalClick,
+      dropProposal: function () { dropProposal(); },
+      leastLoaded: function () { return window.MilkProposal.leastLoaded(plans.best); },
+      replan: replanFor, useVariant: useVariant, firstInRoute: firstInRoute, suggestAt: suggestAt,
+      approve: function () { if (!busy()) approvePlan(); }, cancelDraft: cancelProposal,
+      draftKey: function () { return draft ? planKey(draft) : ''; }, approval: approvalState
     });
+    chat.refresh();
   }
   function setView(v) {
     view = v; selected = -1;
@@ -1020,6 +1100,7 @@
 
   function resetDemo() {
     proposal = null;
+    if (chat) chat.reset();
     setStatus('Сбрасываю…');
     // После сброса показываем эталонный план и не пересчитываем: на любом экране числа одинаковые.
     function resetHere(message) {          // без базы: сбрасываем только этот экран, из файлов проекта

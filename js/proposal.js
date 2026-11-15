@@ -178,6 +178,15 @@
       ['Нарушений правил', String(g.problems)]
     ];
   }
+  // Таблица «Цель заказчика · Было · Станет» (карточка предложения и варианты перестроения в чате).
+  function goalsTable(before, after) {
+    var a = goalRows(before), b = goalRows(after);
+    var html = '<table class="proposal-goals"><thead><tr><th>Цель заказчика</th><th>Было</th><th>Станет</th></tr></thead><tbody>';
+    a.forEach(function (row, i) {
+      html += '<tr' + (row[1] !== b[i][1] ? ' class="changed"' : '') + '><th>' + row[0] + '</th><td>' + esc(row[1]) + '</td><td>' + esc(b[i][1]) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+  }
   function card(p) {
     if (!p) return '';
     var html = '<div class="proposal' + (p.ok ? '' : ' failed') + '"><b>' + (p.ok ? 'Предложение: ещё не в общем плане' : 'Предложение не построено') + '</b>';
@@ -188,12 +197,7 @@
       return html;
     }
     if (p.variants) html += variantsBlock(p);
-    var a = goalRows(p.before), b = goalRows(p.after);
-    html += '<table class="proposal-goals"><thead><tr><th>Цель заказчика</th><th>Было</th><th>Станет</th></tr></thead><tbody>';
-    a.forEach(function (row, i) {
-      html += '<tr' + (row[1] !== b[i][1] ? ' class="changed"' : '') + '><th>' + row[0] + '</th><td>' + esc(row[1]) + '</td><td>' + esc(b[i][1]) + '</td></tr>';
-    });
-    html += '</tbody></table>' + droppedBlock(p.plan) + '<p class="proposal-note">На карте и в маршрутах — предложенный план. Водители и другие экраны его не видят, ' +
+    html += goalsTable(p.before, p.after) + droppedBlock(p.plan) + '<p class="proposal-note">На карте и в маршрутах — предложенный план. Водители и другие экраны его не видят, ' +
       'пока вы не нажмёте «Применить». Таблицы слева пока закрыты для правки.</p>' +
       '<div class="proposal-actions"><button type="button" class="btn primary" id="prop-apply">Применить</button>' +
       '<button type="button" class="btn" id="prop-cancel">Отменить</button></div></div>';
@@ -270,7 +274,7 @@
       '</div></div>';
   }
 
-  var api = { make: make, choose: choose, move: move, save: save, goals: goals, tiles: tiles, card: card, whatIf: whatIf, scenario: scenario, leastLoaded: leastLoaded, KEYS: KEYS };
+  var api = { make: make, choose: choose, move: move, save: save, goals: goals, tiles: tiles, card: card, goalsTable: goalsTable, whatIf: whatIf, scenario: scenario, leastLoaded: leastLoaded, KEYS: KEYS };
   if (typeof window !== 'undefined') window.MilkProposal = api;
   if (node) module.exports = api;
 })();
