@@ -235,6 +235,13 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     ok(/Все правила соблюдены/.test(P.text('problems')), 'завтра: все принципы заказчика выполнены: ' + P.text('problems').replace(/<[^>]+>/g, ' ').slice(0, 200));
     ok(/мелкая точка — до 250 кг/.test(P.el('status').textContent) && /В гараже: /.test(P.text('routes')), 'завтра: допущение о мелкой точке видно, машины в гараже видны');
     ok(!P.el('btn-approve').disabled && /План не утверждён/.test(P.el('approval').textContent), 'завтра — рабочий день: «Утвердить» открыто');
+    const kmT = +(/Суммарный пробег<\/span><span class="kpi-value">(\d+)/.exec(k) || [])[1];
+    ok(kmT === 353, 'завтра: план посчитан заранее (лучший из 8 расчётов), 353 км: ' + kmT);
+    // «Минус одна машина» на завтра: пробег не может стать короче исходного только из-за случайного начала поиска
+    click('', { 'data-hint': 'minus1' }); await tick();
+    const after = +(/<th>Суммарный пробег<\/th><td>[^<]*<\/td><td>(\d+) км/.exec(log()) || [])[1];
+    ok(after >= kmT, 'завтра, минус одна машина: пробег ' + after + ' км, не короче исходных ' + kmT);
+    click('prop-cancel'); await tick();
     const saved = JSON.parse(P.storage['milk.plan.v3']);
     ok(saved.settings.day === 'tomorrow' && saved.orders.reduce((a, o) => a + o.kg, 0) < 45000, 'завтра сохранено: данные обычного дня и отметка дня');
     clean('завтра');

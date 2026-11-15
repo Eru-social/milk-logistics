@@ -7,7 +7,7 @@
 //     изменения всем подписанным экранам строго в порядке записи, как Supabase Realtime. Задержка сети у каждого экрана своя.
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const DIR = path.join(__dirname, '..');
-const SCRIPTS = ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/solver.js',
+const SCRIPTS = ['js/config.js', 'js/store.js', 'js/settings.js', 'js/data.js', 'js/roads.js', 'js/base-plan.js', 'js/tomorrow-plan.js', 'js/solver.js',
   'js/fleet.js', 'js/replan.js', 'js/changes.js', 'js/proposal.js', 'js/assistant.js', 'js/chat.js', 'js/map.js', 'js/app.js'];
 
 // ---------- общие часы ----------

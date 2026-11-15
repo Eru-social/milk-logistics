@@ -548,6 +548,11 @@
   //   rounds — сколько раз «встряхивать» план (по умолчанию improveRounds из настроек);
   //   seed   — начальное число для случайного выбора. С одним и тем же seed и тем же запасом
   //            времени на одном компьютере план всегда одинаковый.
+  //   start  — короткая запись прежнего плана (toAssignment). Поиск начинается и с него, и «с нуля»,
+  //            дальше идёт от лучшего. Зачем (просьба автора 16 ноября): поиск — перебор от случайного начала,
+  //            итог от начала заметно зависит (на «Завтра» 381–412 км). Без start предложение «машина 9 не выходит»
+  //            выходило на 40 км короче исходного плана — просто потому, что тот расчёт начался неудачнее.
+  //            С прежним планом в начале новый план не хуже прежнего только из-за случайности.
   // Важно: если запаса времени не хватило, на медленном компьютере план выйдет хуже, чем на быстром.
   // Поэтому числа для показа берутся из эталонного плана, а не из расчёта на месте.
   function solve(input, opts) {
@@ -559,6 +564,10 @@
     var rounds = opts.rounds > 0 ? opts.rounds : P.st.improveRounds;
     var near = buildNeighbours(P, 14);
     var best = routes, bestCost = P.vehicles.length ? new LocalSearch(P, best, near).run(hardStop) : 0;
+    if (opts.start && P.vehicles.length) {
+      var warm = startRoutes(P, opts.start), warmCost = new LocalSearch(P, warm, near).run(hardStop);
+      if (warmCost < bestCost - 1e-6) { best = warm; bestCost = warmCost; }
+    }
     var rnd = makeRandom(opts.seed || 12345);
     var round;
     for (round = 0; round < rounds && Date.now() < hardStop && P.vehicles.length; round++) {
@@ -588,6 +597,40 @@
       out.calm = solveCalm(P, best, near, makeRandom((opts.seed || 12345) + 1), opts.dropMs > 0 ? opts.dropMs : 1500, rounds);
     }
     return out;
+  }
+
+  // Начало поиска из прежнего плана (opts.start). Маршруты машин, которые есть и сейчас, остаются как были.
+  // Маршрут машины, которой сейчас нет (сняли, выбыла, другой выбор по весу), целиком переходит к свободной машине,
+  // которой хватает места (самой малой из таких): соседние точки остаются вместе. Остальные точки (новые, не влезли)
+  // вставляются в самое дешёвое место. Дальше поиск сам улучшает.
+  function startRoutes(P, assignment) {
+    var vIndex = {}, used = {}, routes = P.vehicles.map(function () { return []; }), orphans = [];
+    P.vehicles.forEach(function (v, k) { vIndex[v.id] = k; });
+    (Array.isArray(assignment) ? assignment : []).forEach(function (a) {
+      if (!a || !Array.isArray(a.s) || a.v === NOT_TODAY) return;
+      var seq = [], kg = 0;
+      a.s.forEach(function (oid) {
+        var i = P.stopOf[oid];
+        if (i === undefined || used[i]) return;
+        used[i] = true; seq.push(i); kg += P.stops[i].kg;
+      });
+      if (!seq.length) return;
+      if (vIndex[a.v] !== undefined && !routes[vIndex[a.v]].length) routes[vIndex[a.v]] = seq;
+      else orphans.push({ seq: seq, kg: kg });
+    });
+    orphans.sort(function (a, b) { return b.kg - a.kg; });
+    var loose = [];
+    orphans.forEach(function (o) {
+      var pick = -1;
+      routes.forEach(function (r, k) {
+        if (r.length || P.vehicles[k].cap < o.kg) return;
+        if (pick < 0 || P.vehicles[k].cap < P.vehicles[pick].cap) pick = k;
+      });
+      if (pick >= 0) routes[pick] = o.seq; else loose = loose.concat(o.seq);
+    });
+    loose.forEach(function (i) { insertCheapest(P, routes, i); });
+    P.stops.forEach(function (s, i) { if (!used[i]) insertCheapest(P, routes, i); });
+    return routes;
   }
 
   // ---------- вариант «без нарушений»: воображаемая машина «не везём» (этап 3, решение 6) ----------

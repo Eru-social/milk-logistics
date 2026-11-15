@@ -102,7 +102,7 @@
   function solveAndShare() {
     clearTimeout(solveTimer); clearTimeout(fallbackTimer); remoteData = false;
     var hadDropped = plans.best && !plans.best.live && plans.best.dropped && plans.best.dropped.length;
-    plans.best = notWorseThanBase(window.MilkFleet.solve(input()));
+    plans.best = notWorseThanBase(window.MilkFleet.solve(input(), { start: startOf(plans.best) }));
     // Список «не везём» выбирал логист в предложении (этап 3). Расчёт с нуля везёт всё — говорим об этом прямо.
     if (hadDropped) toast('План построен заново и везёт всё: список «не везём сегодня» снят. Вариант «без нарушений» — снова через предложение.', 'warn');
     plans.naive = window.MilkSolver.naive(input());
@@ -706,7 +706,8 @@
     return vid;
   }
   function openProposal(list) {
-    var opts = { solve: function (inp, o) { return notWorseThanBase(window.MilkFleet.solve(inp, o), inp); } };
+    var start = startOf(plans.best);
+    var opts = { solve: function (inp, o) { return notWorseThanBase(window.MilkFleet.solve(inp, Object.assign({ start: start }, o)), inp); } };
     if (approved) { opts.base = window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)); opts.marks = eventIndex().byStop; }
     setStatus('Считаю предложение…');
     proposal = window.MilkProposal.make({ input: input(), plan: plans.best, naive: plans.naive }, list, opts);
@@ -1145,6 +1146,20 @@
       overtimeToleranceMin: 0, overloadTolerancePct: 0, day: 'tomorrow' });
     return data;
   }
+  // План «Завтра» посчитан заранее (tools/make-tomorrow-plan.js, лучший из 8 расчётов по 600 встряхиваний, 353 км):
+  // расчёт на экране от случайного начала даёт 381–412 км, и предложение после правки выходило короче исходного плана.
+  // Если данные разошлись с теми, на которых считали (точек нет, нарушения), — считаем на месте, как раньше.
+  function tomorrowPlan(data) {
+    var T = window.MILK_TOMORROW_PLAN;
+    if (T) {
+      var p = window.MilkSolver.fromAssignment(data, T.assignment);
+      if (!p.leftover && !p.problems.length) { p.ms = 0; return p; }
+    }
+    return window.MilkFleet.solve(data);
+  }
+  // Прежний план — начало поиска для нового расчёта (opts.start в js/solver.js): новый план не выходит хуже прежнего
+  // только из-за неудачного случайного начала. В идущем дне — нет (там считает перестроение, js/replan.js).
+  function startOf(p) { return p && !p.live ? window.MilkSolver.toAssignment(p) : null; }
   function goTomorrow() {
     if (busy()) return;
     if (isTomorrow()) { if (view !== 'best') setView('best'); return; }
@@ -1153,7 +1168,7 @@
     quietUntil = Date.now() + 60000;
     setStatus('Готовлю завтра…');
     setTimeout(function () {
-      var data = tomorrowData(), plan = window.MilkFleet.solve(data);
+      var data = tomorrowData(), plan = tomorrowPlan(data);
       function finish(before, message) {
         clearTimeout(solveTimer); clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false; remoteStructure = false;
         state = { orders: data.orders, vehicles: data.vehicles, settings: data.settings };
