@@ -519,10 +519,12 @@
         !window.MilkReplan.status(base, id, f.at, f.marks).remaining.some(function (x) { return x.orderId === pre.orderId; })) {
       var po = orderById(pre.orderId), name = '«' + (po ? po.name : pre.orderId) + '»';
       var done = stopTimes(base, [pre.orderId]).filter(function (x) { return x.start <= f.at; })[0];
-      f.error = done
-        ? name + ' по плану уже получил товар в ' + clock(done.start) + ' (' + done.vehicle.name + '), а это раньше ' + clock(f.at) +
-          '. Если машина на самом деле ещё не доехала, напишите, во сколько это случилось, например «в ' + clock(Math.max(done.depart, done.start - 30)) + '».'
-        : 'Точки ' + name + ' нет среди оставшихся у этой машины к ' + clock(f.at) + '. Проверьте время и точку.';
+      var floor = base.live ? base.live.now : 0;
+      f.error = !done ? 'Точки ' + name + ' нет среди оставшихся у этой машины к ' + clock(f.at) + '. Проверьте время и точку.'
+        : done.start <= floor
+          ? name + ' по плану уже получил товар в ' + clock(done.start) + ' (' + done.vehicle.name + '), а день уже перестроен с ' + clock(floor) + ': менять поздно.'
+          : name + ' по плану уже получил товар в ' + clock(done.start) + ' (' + done.vehicle.name + '), а это раньше ' + clock(f.at) +
+            '. Если машина на самом деле ещё не доехала, напишите, во сколько это случилось, например «в ' + clock(Math.max(floor, done.depart, done.start - 30)) + '».';
     }
     return f;
   }
