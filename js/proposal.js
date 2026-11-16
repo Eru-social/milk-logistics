@@ -57,29 +57,42 @@
   }
 
   // Верхняя строка экрана: четыре плитки, по одной на цель заказчика.
-  function tile(label, value, unit, pill, sub) {
-    return '<div class="kpi"><span class="kpi-label">' + label + '</span><span class="kpi-value">' + value +
-      (unit ? ' <small>' + unit + '</small>' : '') + (pill || '') + '</span><span class="kpi-sub">' + sub + '</span></div>';
+  function tile(label, value, unit, pill, sub, was) {
+    return '<div class="kpi' + (was ? ' compare' : '') + '"><span class="kpi-label">' + label + '</span><span class="kpi-value">' + value +
+      (unit ? ' <small>' + unit + '</small>' : '') + (pill || '') + '</span>' + (was || '') + '<span class="kpi-sub">' + sub + '</span></div>';
+  }
+  // Строка «было … и разница» под числом плитки (просьба автора 16 ноября: решение из чата логист должен сравнить
+  // на экране, а не только в таблице в чате). better: 'less' — меньше лучше (км, машины), 'more' — больше лучше.
+  function wasLine(text, delta, unit, better, digits) {
+    var d = Math.round(delta * Math.pow(10, digits || 0)) / Math.pow(10, digits || 0);
+    var kind = !d ? '' : ((better === 'less' ? d < 0 : d > 0) ? 'good' : 'bad');
+    return '<span class="kpi-was">было ' + text + ' ' + (d ? pill(kind, (d > 0 ? '+' : '−') + num(Math.abs(d), digits) + (unit ? ' ' + unit : '')) : pill('', 'без изменений')) + '</span>';
   }
   function pill(kind, text) { return '<span class="pill ' + kind + '">' + text + '</span>'; }
   // opts.kmSub — подпись под пробегом вместо двух оценок «как сейчас» (новый экран: «План доставки по Гродно · …»).
   function tiles(g, plan, opts) {
-    var k = g.km, f = g.fleet, w = g.window, html = '';
+    var k = g.km, f = g.fleet, w = g.window, html = '', b = opts && opts.before, W = {};
+    if (b) {
+      W.delivery = wasLine(num(b.delivery.pct) + '%', g.delivery.pct - b.delivery.pct, '%', 'more');
+      W.km = wasLine(num(b.km.km) + ' км', k.km - b.km.km, 'км', 'less');
+      W.fleet = wasLine(b.fleet.used + ' из ' + b.fleet.active, f.used - b.fleet.used, '', 'less');
+      W.window = wasLine(b.window.onTime + ' из ' + b.window.important + ', смена до ' + hours(b.window.longest), w.onTime - b.window.onTime, '', 'more');
+    }
     function vs(ref) { var d = ref ? (k.km - ref) / ref * 100 : 0; return pill(d <= 0 ? 'good' : 'bad', (d <= 0 ? '−' : '+') + num(Math.abs(d)) + '%'); }
     html += tile('Время доставки', num(g.delivery.pct) + '%', 'груза к 12:00', '',
-      'Доля груза по весу, разгруженного к 12:00. Средний час разгрузки ' + clock(g.delivery.avgStart) + ' (по весу)');
-    if (opts && opts.kmSub != null) html += tile('Суммарный пробег', num(k.km), 'км', '', esc(opts.kmSub));
+      'Доля груза по весу, разгруженного к 12:00. Средний час разгрузки ' + clock(g.delivery.avgStart) + ' (по весу)', W.delivery);
+    if (opts && opts.kmSub != null) html += tile('Суммарный пробег', num(k.km), 'км', '', esc(opts.kmSub), W.km);
     else html += tile('Суммарный пробег', num(k.km), 'км', '',
       'Как сейчас, две оценки:<br>' + vs(k.refKm) + ' от ' + num(k.refKm) + ' км — ' + k.refPerRoute + ' км × ' + k.refRoutes +
       ' маршрутов, со слов логистов<br>' + vs(k.listKm) + ' от ' + num(k.listKm) + ' км — «по списку»: список заказчика по порядку, нарезан по вместимости машин');
     html += tile('Количество транспорта', f.used, 'из ' + f.active, f.garage ? pill('good', f.garage + ' в гараже') : '',
       (plan && plan.live ? 'День идёт: снимок на ' + clock(plan.live.now) + ', уже сделанное не меняется. ' : '') +
-      'Средняя загрузка ' + num(f.avgLoad) + '%, правило: не ниже ' + f.minLoad + '%');
+      'Средняя загрузка ' + num(f.avgLoad) + '%, правило: не ниже ' + f.minLoad + '%', W.fleet);
     var shiftOk = w.longest <= w.shiftMin + Math.max(0.5, w.tol);
     html += tile('Окно доставки', w.onTime, 'из ' + w.important + ' важных вовремя',
       pill(w.onTime === w.important ? 'good' : 'bad', w.onTime === w.important ? 'все вовремя' : 'опоздания'),
       'Самая длинная смена ' + hours(w.longest) + (shiftOk ? ' — в норме ' : ' — больше нормы ') + hours(w.shiftMin) + '. ' +
-      (w.overtime > 0.5 ? 'Переработка ' + hours(w.overtime) + ' на ' + plural(w.overtimeVehicles, 'водителя', 'водителей', 'водителей') : 'Переработки нет'));
+      (w.overtime > 0.5 ? 'Переработка ' + hours(w.overtime) + ' на ' + plural(w.overtimeVehicles, 'водителя', 'водителей', 'водителей') : 'Переработки нет'), W.window);
     return html;
   }
 

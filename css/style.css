@@ -83,6 +83,11 @@ button, input { font: inherit; color: inherit; }
 .pill.good { background: var(--good-soft); color: var(--good); }
 .pill.warn { background: var(--warn-soft); color: var(--warn); }
 .pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.changed { background: var(--accent-soft); color: var(--accent); }
+/* «было → станет» в плитках сверху (решение из чата) */
+.kpi.compare { border-color: var(--accent); }
+.kpi-was { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.kpi-was .pill:not(.good):not(.bad) { background: var(--line); color: var(--muted); }
 
 /* ---------- три колонки ---------- */
 .work { flex: 1; min-height: 0; display: grid; grid-template-columns: 430px minmax(0, 1fr) 340px; gap: 12px; }

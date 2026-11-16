@@ -72,7 +72,7 @@
           'line-opacity': ['case', ['get', 'dim'], 0.15, 0.5] } });
       map.addLayer({ id: 'routes-line', type: 'line', source: 'routes', filter: ['==', ['get', 'pending'], false],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'sel'], 5, 2.5],
+        paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['get', 'sel'], 5, ['get', 'hi'], 4.5, 2.5],
           'line-opacity': ['case', ['get', 'dim'], 0.3, 0.85] } });
       // Кольцо вокруг заказа, выбранного в таблице слева.
       map.addLayer({ id: 'stops-focus', type: 'circle', source: 'stops', filter: ['==', ['get', 'focus'], true],
@@ -104,7 +104,8 @@
 
   function empty() { return { type: 'FeatureCollection', features: [] }; }
 
-  // model = { depot, selected, routes: [{ k, color, name, road, open, points: [{lat, lon, n, html}], path }], marks: [{lat, lon, title}] }
+  // model = { depot, selected, routes: [{ k, color, name, road, open, points: [{lat, lon, n, html}], path, changed }], marks: [{lat, lon, title}], compare }
+  // compare — на экране «было → станет»: изменённые маршруты (changed) толще и ярче, остальные бледные.
   // open — маршрут не возвращается на завод (сломанная машина); path — через что идёт линия, если это не только остановки;
   // marks — крестики на карте (где стоит сломанная машина).
   function draw(model, fit) {
@@ -118,7 +119,7 @@
     }
     grow(model.depot.lon, model.depot.lat);
     model.routes.forEach(function (r) {
-      var sel = r.k === model.selected, dim = hasSel && !sel;
+      var sel = r.k === model.selected, dim = hasSel ? !sel : !!(model.compare && !r.changed), hi = !hasSel && !!(model.compare && r.changed);
       var coords = [[model.depot.lon, model.depot.lat]];
       (r.path || r.points).forEach(function (p) { coords.push([p.lon, p.lat]); });
       r.points.forEach(function (p) {
@@ -128,10 +129,10 @@
       });
       if (!r.open) coords.push([model.depot.lon, model.depot.lat]);
       lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: r.road || coords },
-        properties: { k: r.k, color: r.color, sel: sel, dim: dim, pending: !r.road } });
+        properties: { k: r.k, color: r.color, sel: sel, dim: dim, hi: hi, pending: !r.road } });
     });
     // Выбранный маршрут рисуем последним, чтобы он лежал поверх остальных.
-    lines.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
+    lines.sort(function (a, b) { return (a.properties.sel || a.properties.hi ? 1 : 0) - (b.properties.sel || b.properties.hi ? 1 : 0); });
     pts.sort(function (a, b) { return (a.properties.sel ? 1 : 0) - (b.properties.sel ? 1 : 0); });
     map.getSource('routes').setData({ type: 'FeatureCollection', features: lines });
     markPins.forEach(function (m) { m.remove(); });
@@ -218,7 +219,7 @@
     });
     spread(items);
     model.routes.forEach(function (r, ri) {
-      var sel = r.k === model.selected, dim = hasSel && !sel, s = '';
+      var sel = r.k === model.selected, dim = hasSel ? !sel : !!(model.compare && !r.changed), hi = !hasSel && !!(model.compare && r.changed), s = '';
       r.points.forEach(function (p, pi) {
         p.sx = at[ri][pi].sx.toFixed(1); p.sy = at[ri][pi].sy.toFixed(1);
         if (focused && (p.oids || []).indexOf(focused.oid) >= 0) ring = '<circle cx="' + p.sx + '" cy="' + p.sy + '" r="16" fill="none" stroke="var(--ink)" stroke-width="3"/>';
@@ -226,14 +227,14 @@
       var d = 'M' + X(model.depot) + ' ' + Y(model.depot);
       if (r.road) r.road.forEach(function (c) { d += ' L' + X({ lon: c[0], lat: c[1] }) + ' ' + Y({ lon: c[0], lat: c[1] }); });
       else { (r.path || r.points).forEach(function (p) { d += ' L' + X(p) + ' ' + Y(p); }); if (!r.open) d += ' Z'; }
-      s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : (r.road ? 2 : 1.2)) +
+      s += '<path data-k="' + r.k + '" d="' + d + '" fill="none" stroke="' + r.color + '" stroke-width="' + (sel ? 4 : (hi ? 3.5 : (r.road ? 2 : 1.2))) +
         '"' + (r.road ? '' : ' stroke-dasharray="2 6"') + ' stroke-linejoin="round" opacity="' + (dim ? 0.3 : 0.85) + '" style="cursor:pointer"/>';
       r.points.forEach(function (p) {
         s += '<g data-k="' + r.k + '" opacity="' + (dim ? 0.45 : 1) + '" style="cursor:pointer"><circle cx="' + p.sx + '" cy="' + p.sy + '" r="' + (sel ? 9 : 5) +
           '" fill="' + (p.color || r.color) + '" stroke="#fff" stroke-width="1.5"><title>' + p.title + '</title></circle>' +
           (sel ? '<text x="' + p.sx + '" y="' + (+p.sy + 3.5) + '" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" pointer-events="none">' + p.n + '</text>' : '') + '</g>';
       });
-      if (sel) front += s; else back += s;
+      if (sel || hi) front += s; else back += s;
     });
     var depot = '<rect x="' + (X(model.depot) - 9) + '" y="' + (Y(model.depot) - 9) + '" width="18" height="18" rx="4" fill="var(--ink)" stroke="#fff" stroke-width="2.5"><title>Завод, Гаспадарчая, 28</title></rect>';
     var crosses = (model.marks || []).map(function (m) {

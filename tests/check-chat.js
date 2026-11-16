@@ -62,7 +62,13 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
   ok(/prop-apply/.test(log()) && /Было<\/th><th>Станет/.test(log()), 'сразу предложение «было → станет», без кнопки «Посчитать»');
   ok(!/id="as-go"/.test(log()), 'карточки с «Посчитать» нет');
   ok(!P.el('map-flag').hidden, 'на карте пометка «предложение»');
+  {
+    const kt = P.text('kpis').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    ok(/было 397 км/.test(kt) && /было \d+%/.test(kt) && (P.text('kpis').match(/kpi-was/g) || []).length === 4, 'плитки сверху: «было» и разница у всех четырёх: ' + kt.slice(0, 300));
+    ok(/pill changed">изменён/.test(P.text('routes')), 'в маршрутах изменённые помечены «изменён»');
+  }
   click('prop-cancel'); await tick();
+  ok(!/kpi-was/.test(P.text('kpis')) && !/изменён</.test(P.text('routes')), 'после «Отменить» сравнения нет');
   ok(!/prop-apply/.test(log()) && /Отменено: показан прежний план/.test(log()), 'после «Отменить» кнопок нет, в чате «Отменено»');
   ok(P.text('kpis') === kpi0 && P.text('routes') === routes0 && P.el('map-flag').hidden, '«Отменить» вернуло прежний план');
   // «Минус одна машина»: номер не спрашивается, но можно поправить
@@ -257,10 +263,12 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     answer([{ kind: 'breakdown', vehicle: vid, at: '08:30' }]);
     await send('Машина ' + vid + ' сломалась в 8:30');
     ok(/data-act="approve"/.test(lastMsg()), 'поломка завтра: перестроение посчитано');
+    ok(/было 353 км/.test(P.text('kpis').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')) && /pill changed">изменён/.test(P.text('routes')), 'поломка завтра: сверху «было 353 км», изменённые маршруты помечены');
     console.log('   поломка машины ' + vid + ' в 8:30: ' + (/резервная, стояла в гараже/.test(lastMsg()) ? 'выехала резервная из гаража' : 'точки забрали соседи'));
     ok(/без переработки/.test(lastMsg()) && /довезём всё/.test(lastMsg()), 'поломка завтра: довезём всё и без переработки');
     click('', { 'data-act': 'approve', 'data-msg': actMsg('approve') }); await tick();
     ok(/Утверждено в/.test(log()), 'перестроение утверждено');
+    ok(!/kpi-was/.test(P.text('kpis')), 'после «Утвердить» сравнения нет: на экране утверждённый план');
     clean('поломка завтра');
     // «Сегодня» — обратно день максимальной загрузки
     P.fire('view-best', 'click'); await tick(1000);

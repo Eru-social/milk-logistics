@@ -141,7 +141,35 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { el.className = 'toast'; }, 4500);
   }
 
+  // «БЫЛО → СТАНЕТ» НА ЭКРАНЕ (просьба автора 16 ноября: решение из чата логист должен видеть и сравнить на карте
+  // и в цифрах, а не только в таблице в чате). С чем сравнивать:
+  //   открыто предложение — с планом до него (общий черновик);
+  //   черновик отличается от утверждённого (перестроение из чата показано на карте) — с утверждённым планом.
+  // Плитки сверху получают строку «было … и разница», на карте изменённые маршруты яркие, остальные бледные,
+  // в списке маршрутов у изменённых — плашка «изменён». Только новый экран; на ?old=1 всё как было.
+  var compare = null;            // { goals, changed: { номер машины: true } } на время отрисовки
+  function compareBase() {
+    if (OLD || view !== 'best') return null;
+    if (proposal && proposal.ok) return { plan: plans.best, input: input(), naive: plans.naive };
+    if (approved && approvalState() === 'changed')
+      return { plan: window.MilkSolver.fromAssignment(input(), approved.assignment, null, liveOf(approved)), input: input(), naive: plans.naive };
+    return null;
+  }
+  function routeKeys(p) {
+    var out = {};
+    p.routes.forEach(function (r) { out[r.vehicle.id] = (r.broken ? 'x' : '') + r.seq.map(function (si) { return p.stops[si].orders[0].id; }).join(','); });
+    return out;
+  }
+  function makeCompare(base, p) {
+    if (!base) return null;
+    var a = routeKeys(base.plan), b = routeKeys(p), changed = {}, any = false;
+    Object.keys(b).forEach(function (id) { if ((a[id] || '') !== b[id]) { changed[id] = true; any = true; } });
+    Object.keys(a).forEach(function (id) { if (b[id] === undefined && a[id]) { changed[id] = true; any = true; } });
+    return { goals: window.MilkProposal.goals(base.plan, base.input, base.naive), changed: changed, any: any };
+  }
+
   function render(fit) {
+    var base = compareBase();
     // Пока открыто предложение (этап 1Б), экран на время отрисовки берёт его данные и план, потом возвращает свои.
     var keep = proposal && proposal.ok ? { state: state, best: plans.best, naive: plans.naive, view: view } : null;
     if (keep) { state = proposal.data; plans.best = proposal.plan; plans.naive = proposal.naive; view = 'best'; }
@@ -149,9 +177,11 @@
       var p = plans[view];
       if (!p) return;
       var idx = eventIndex(), fleet = fleetNote(p);
+      compare = makeCompare(base, p);
       renderMeta(); renderApproval(); renderKpis(p); renderFeed(); renderBanner(p); renderProblems(p, fleet); renderFleet(fleet); renderRoutes(p, idx); renderChips(p); renderVehicles(p); renderMap(p, fit, idx);
     } finally {
       if (keep) { state = keep.state; plans.best = keep.best; plans.naive = keep.naive; view = keep.view; }
+      compare = null;
     }
     renderProposal();
     markDay();
@@ -191,7 +221,8 @@
   // Верхняя строка — четыре цели заказчика его словами (этап 1Б): время доставки, суммарный пробег,
   // количество транспорта, окно доставки. Числа и плитки собирает js/proposal.js.
   function renderKpis(p) {
-    $('kpis').innerHTML = window.MilkProposal.tiles(window.MilkProposal.goals(p, input(), plans.naive), p, OLD ? null : { kmSub: metaText });
+    $('kpis').innerHTML = window.MilkProposal.tiles(window.MilkProposal.goals(p, input(), plans.naive), p,
+      OLD ? null : { kmSub: metaText, before: compare ? compare.goals : null });
   }
 
   // ---------- события водителей ----------
@@ -297,6 +328,7 @@
       if (r.late > 0.5) flags += '<span class="pill bad">опоздание</span>';
       if (r.center > 0) flags += '<span class="pill bad">большая машина в центре</span>';
       if (!live && r.loadPct < st.minLoadPct) flags += '<span class="pill warn">недогруз</span>';
+      if (compare && compare.changed[r.vehicle.id]) flags = '<span class="pill changed">изменён</span>' + flags;
       // Строка машины — в том же виде, что строки таблицы заказов (просьба автора 15 ноября): слева цветная плашка
       // с номером машины, как в столбце «Маш.» у заказов; жирно — «точки · км · выезд–возвращение»,
       // серым ниже — загрузка «загружено/вместимость кг · %» с полоской. Пока день идёт, к строке добавляется, что осталось.
@@ -409,9 +441,10 @@
       if (!r.road) askRoad(p, r, path);
       if (!r.road && !r.roadFailed) pending++;
       if (r.roadFailed) failed++;
-      routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null, open: !!r.broken, points: points, path: path });
+      routes.push({ k: k, color: colorOf(r.vehicle.id), name: r.vehicle.name, road: r.road || null, open: !!r.broken, points: points, path: path,
+        changed: !!(compare && compare.changed[r.vehicle.id]) });
     });
-    window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes, marks: marks }, fit);
+    window.MilkMap.draw({ depot: DATA.depot, selected: selected, routes: routes, marks: marks, compare: !!(compare && compare.any) }, fit);
     var note = p.byRoad ? 'Расстояния и время посчитаны по дорогам (данные OpenStreetMap), время в пути умножено на ' +
         String(state.settings.trafficFactor).replace('.', ',') + ' как запас на пробки.' :
       'Таблицы дорог нет: расстояния оценены по прямой с поправкой ×' + String(state.settings.detour).replace('.', ',') + '.';
