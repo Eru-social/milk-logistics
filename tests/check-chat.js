@@ -281,6 +281,7 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     // «Завтра» на экране A — экран B получает тот же рабочий день
     A.fire('view-tomorrow', 'click'); await clock.advance(60000);
     ok(/44,[56] т/.test(B.text('kpis')) && A.text('kpis') === B.text('kpis'), '«Завтра» с экрана A: экран B показывает тот же обычный день');
+    ok(/Суммарный пробег 353 км/.test(A.text('kpis').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')) && /Все правила соблюдены/.test(A.text('problems')), 'экран A: план «Завтра» (353 км), а не эталон «Сегодня» от сброса базы: ' + A.text('kpis').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 260) + ' | ' + A.el('status').textContent);
     ok(/^завтра:/.test(A.el('status').textContent), 'экран A не пересчитывал план сам после перехода (отголоски сброса не приняты за чужие правки): ' + A.el('status').textContent);
     ok(server.tables.app_settings.length && JSON.stringify(server.tables.app_settings).indexOf('tomorrow') >= 0, 'в базе отметка «завтра»');
     B.fire('view-best', 'click'); await clock.advance(30000);

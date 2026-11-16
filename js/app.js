@@ -894,6 +894,7 @@
       state.settings = merged; buildSettings(); queueRemote(true);
     },
     plan: function (kind, plan) {
+      if (quiet()) return;            // переход на «Завтра»: черновик эталона от сброса базы приходит с опозданием
       // При сбросе демо планы удаляются, и весть об этом иногда приходит с опозданием.
       // Если план здесь только что создан или утверждён (он новее сброса), запоздалое удаление его не стирает.
       var mine = kind === 'draft' ? draft : approved;
@@ -1183,7 +1184,8 @@
         window.MilkProposal.save(Store, before, state).then(function () {
           clearTimeout(remoteTimer); clearTimeout(fallbackTimer); remoteData = false;
           quietUntil = Date.now() + 5000;          // последние отголоски своих же записей
-          shareDraft(); saveLocal();
+          approved = null; plans.best = plan; plans.naive = window.MilkSolver.naive(input()); selected = -1;
+          shareDraft(); saveLocal(); render(true);
           setStatus(said);
           toast('Завтра — обычный день: план построен, не утверждён. Водители увидят его после «Утвердить план».');
         });
