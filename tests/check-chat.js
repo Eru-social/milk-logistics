@@ -248,6 +248,11 @@ function ok(cond, text) { checks++; if (!cond) { fails++; console.log('  ОШИ�
     // утверждаем и ломаем машину — выезжает резервная из гаража
     P.fire('btn-approve', 'click'); await tick();
     ok(/Утверждён в/.test(P.el('approval').textContent), 'завтра утверждено');
+    // магазин «просит позже» без времени: время по плану берётся до разгрузки там, а не середина маршрута
+    answer([{ kind: 'later', store: 'Евроопт на Суворова', time: '14:00' }]);
+    await send('Евроопт на Суворова просит привезти не раньше 14:00');
+    ok(/data-act="approve"/.test(lastMsg()) && !/нет среди оставшихся|уже получил/.test(log()), 'завтра: «просит позже» посчитано, магазин ещё не получил товар: ' + lastMsg().replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200));
+    while (/data-act="cancel"/.test(lastMsg())) { click('', { 'data-act': 'cancel', 'data-msg': actMsg('cancel') }); await tick(); }
     const vid = +(/class="chip route-num"[^>]*>(\d+)</.exec(P.text('routes')) || [])[1];
     answer([{ kind: 'breakdown', vehicle: vid, at: '08:30' }]);
     await send('Машина ' + vid + ' сломалась в 8:30');

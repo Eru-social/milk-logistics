@@ -517,8 +517,12 @@
     f.at = pre.at != null ? pre.at : window.MilkReplan.suggestTime(base, id, f.marks, nowMin());
     if (pre.orderId && (f.type === 'stop' || f.type === 'later') &&
         !window.MilkReplan.status(base, id, f.at, f.marks).remaining.some(function (x) { return x.orderId === pre.orderId; })) {
-      var po = orderById(pre.orderId);
-      f.error = 'Точки «' + (po ? po.name : pre.orderId) + '» нет среди оставшихся у этой машины к ' + clock(f.at) + '. Проверьте время и точку.';
+      var po = orderById(pre.orderId), name = '«' + (po ? po.name : pre.orderId) + '»';
+      var done = stopTimes(base, [pre.orderId]).filter(function (x) { return x.start <= f.at; })[0];
+      f.error = done
+        ? name + ' по плану уже получил товар в ' + clock(done.start) + ' (' + done.vehicle.name + '), а это раньше ' + clock(f.at) +
+          '. Если машина на самом деле ещё не доехала, напишите, во сколько это случилось, например «в ' + clock(Math.max(done.depart, done.start - 30)) + '».'
+        : 'Точки ' + name + ' нет среди оставшихся у этой машины к ' + clock(f.at) + '. Проверьте время и точку.';
     }
     return f;
   }
@@ -671,10 +675,36 @@
     if (!lv.ids || !lv.ids.length) return null;
     return lv.ids.indexOf(open) >= 0 ? open : lv.ids[0];
   }
-  function suggestAt(vehicleId) {
+  // orderIds — для происшествия с магазином («просит позже», «не принимает»). Время по плану берётся середина маршрута,
+  // а магазин из первой половины к этому времени по плану уже получил товар — и расчёт отвечал «точки нет среди оставшихся»
+  // (найдено 16 ноября). Раз логист говорит о магазине, машина до него ещё не доехала: берём время за 30 минут
+  // до разгрузки там (не раньше выезда машины).
+  function suggestAt(vehicleId, orderIds) {
     var lv = liveVehicles();
     if (!lv.base || !vehicleId) return '';
-    return clock(window.MilkReplan.suggestTime(lv.base, vehicleId, eventIndex().byStop, nowMin()));
+    var t = window.MilkReplan.suggestTime(lv.base, vehicleId, eventIndex().byStop, nowMin());
+    if (orderIds && orderIds.length) {
+      // Не раньше снимка дня (прошлое происшествие уже заморожено) и не для точки, где водитель уже отметился.
+      var floor = lv.base.live ? lv.base.live.now : 0, marks = eventIndex().byStop;
+      var hit = stopTimes(lv.base, orderIds).filter(function (x) {
+        return x.vehicle.id === vehicleId && !orderIds.some(function (oid) { return marks[vehicleId + ':' + oid]; });
+      });
+      if (hit.length && !hit.some(function (x) { return x.start > t; })) {
+        var first = Math.min.apply(null, hit.map(function (x) { return x.start; }));
+        if (first > floor) t = Math.max(floor, hit[0].depart, Math.floor((first - 30) / 5) * 5);
+      }
+    }
+    return clock(t);
+  }
+  // Когда по плану разгружаются эти заказы: [{ vehicle, start, depart }].
+  function stopTimes(plan, orderIds) {
+    var out = [];
+    plan.routes.forEach(function (r) {
+      (r.stops || []).forEach(function (x) {
+        if (plan.stops[x.stop].orders.some(function (o) { return orderIds.indexOf(o.id) >= 0; })) out.push({ vehicle: r.vehicle, start: x.start, depart: r.depart });
+      });
+    });
+    return out;
   }
   function cancelProposal() {
     if (!approved) return;

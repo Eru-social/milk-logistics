@@ -170,7 +170,7 @@
     function autoAt(r) {
       if (A.LIVE_KINDS.indexOf(r.kind) < 0 || (r.at && !r.atAuto)) return;
       var g = A.picked(r), vid = r.vehicleId != null ? r.vehicleId : (g ? api.vehicleOfOrder(g.ids[0]) : null);
-      r.at = vid ? api.suggestAt(vid) : ''; r.atAuto = true;
+      r.at = vid ? api.suggestAt(vid, g ? g.ids : null) : ''; r.atAuto = true;
     }
     function complete(a) { return a.rows.length && !(a.questions || []).length && !A.blockers(a.rows).length; }
     function closeCard(note) {

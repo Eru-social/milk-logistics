@@ -26,8 +26,12 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     let verdict, got = '';
     if (!res.ok) { verdict = 'СБОЙ: ' + res.message; busy++; }
     else {
-      const r = A.resolve(res, { orders: D.orders, vehicles: D.vehicles }), lines = r.rows.map(A.line);
+      const r = A.resolve(res, { orders: D.orders, vehicles: D.vehicles }); let lines = r.rows.map(A.line);
       got = JSON.stringify(lines) + (r.questions.length ? ' вопросы: ' + JSON.stringify(r.questions) : '');
+      // Несколько подходящих магазинов: сверяем, сколько их нашлось, а не слова модели («Щорса» и «магазин на Щорса» —
+      // одни и те же 5 магазинов; 16 ноября проверка из-за этого записала верный ответ в «неверно»).
+      const same = l => l.replace(/\[выбрать из (\d+): [^\]]*\]/, '[выбрать из $1]');
+      lines = lines.map(same); p.expect = p.expect.map(same);
       if (JSON.stringify(lines) === JSON.stringify(p.expect) && (!p.ask || r.questions.length)) { verdict = 'верно'; good++; }
       // «Вопрос» — модель не сделала ни одного неверного действия, но чего-то не поняла и спросила
       // (по плану этапа 2 это допустимо: «остальные заканчиваются вопросом, а не неверным действием»).

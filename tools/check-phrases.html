@@ -46,6 +46,9 @@
       else {
         var r = A.resolve(res, { orders: D.orders, vehicles: D.vehicles }), lines = r.rows.map(A.line);
         got = JSON.stringify(lines) + (r.questions.length ? ' · вопросы: ' + r.questions.join(' / ') : '');
+        // Несколько подходящих магазинов: сверяем, сколько их нашлось, а не слова модели («Щорса» = «магазин на Щорса»).
+        var same = function (l) { return l.replace(/\[выбрать из (\d+): [^\]]*\]/, '[выбрать из $1]'); };
+        lines = lines.map(same); p.expect = p.expect.map(same);
         if (JSON.stringify(lines) === JSON.stringify(p.expect) && (!p.ask || r.questions.length)) { verdict = 'верно'; cls = 'ok'; good++; }
         else if (r.questions.length && lines.every(function (l) { return p.expect.indexOf(l) >= 0; })) { verdict = 'вопрос'; cls = 'ask'; asked++; }
         else { verdict = 'НЕВЕРНО, ждали ' + JSON.stringify(p.expect); cls = 'bad'; wrong++; }
