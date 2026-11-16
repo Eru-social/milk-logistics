@@ -73,8 +73,9 @@
   function tiles(g, plan, opts) {
     var k = g.km, f = g.fleet, w = g.window, html = '', b = opts && opts.before, W = {};
     if (b) {
-      W.delivery = wasLine(num(b.delivery.pct) + '%', g.delivery.pct - b.delivery.pct, '%', 'more');
-      W.km = wasLine(num(b.km.km) + ' км', k.km - b.km.km, 'км', 'less');
+      // Разница — между уже округлёнными числами, как их видит логист (358 и «было 353» → +5, а не +6).
+      W.delivery = wasLine(num(b.delivery.pct) + '%', Math.round(g.delivery.pct) - Math.round(b.delivery.pct), '%', 'more');
+      W.km = wasLine(num(b.km.km) + ' км', Math.round(k.km) - Math.round(b.km.km), 'км', 'less');
       W.fleet = wasLine(b.fleet.used + ' из ' + b.fleet.active, f.used - b.fleet.used, '', 'less');
       W.window = wasLine(b.window.onTime + ' из ' + b.window.important + ', смена до ' + hours(b.window.longest), w.onTime - b.window.onTime, '', 'more');
     }
